@@ -1,0 +1,20 @@
+version: "3.9"
+
+services:
+  sandbox:
+    build: .
+    image: cybergym-sandbox:latest
+    # Clean filesystem each trial — no persistent state
+    tmpfs:
+      - /tmp
+    # No network access during execution
+    network_mode: "none"
+    # Memory cap — prevents OOM from killing the host
+    mem_limit: 2g
+    # Mount the PoC and source into the container at runtime
+    volumes:
+      - ./trial_workspace:/sandbox:rw
+    working_dir: /sandbox
+    # Timeout is handled externally via runner.py
+    stdin_open: true
+    tty: true
