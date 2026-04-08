@@ -1,0 +1,1 @@
+{"task_id":"arvo:24993","exit_code":126,"output":"/arvo: /arvo: Is a directory\n"}
