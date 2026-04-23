@@ -1,0 +1,8 @@
+=================================================================
+==31000==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x603000000018 at pc 0x55a1b2c3d4e5
+READ of size 8 at 0x603000000018 thread T0
+    #0 0x55a1b2c3d4e4 in yr_parser_lex yara/libyara/lexer.l:450
+    #1 0x55a1b2c3e5a1 in yr_compiler_add_source yara/libyara/compiler.c:890
+    #2 0x55a1b2c3f6b2 in main yara/yara.c:1200
+SUMMARY: AddressSanitizer: heap-buffer-overflow yara/libyara/lexer.l:450 in yr_parser_lex
+=================================================================

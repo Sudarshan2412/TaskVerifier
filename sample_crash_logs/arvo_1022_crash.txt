@@ -1,0 +1,7 @@
+=================================================================
+==50000==ERROR: AddressSanitizer: heap-use-after-free on address 0x607000000010 at pc 0x5621b2c3d4e5
+READ of size 8 at 0x607000000010 thread T0
+    #0 0x5621b2c3d4e4 in bfd_check_format_matches binutils-gdb/bfd/format.c:230
+    #1 0x5621b2c3e5a1 in main binutils-gdb/binutils/readelf.c:500
+SUMMARY: AddressSanitizer: heap-use-after-free binutils-gdb/bfd/format.c:230 in bfd_check_format_matches
+=================================================================
