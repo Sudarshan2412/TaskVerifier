@@ -1,0 +1,61 @@
+{
+  "overall": {
+    "baseline": 0.4,
+    "verifier": 1.0,
+    "delta": 0.6
+  },
+  "by_bucket": [
+    {
+      "bucket": "short",
+      "baseline": 1.0,
+      "verifier": 1.0,
+      "delta": 0.0
+    },
+    {
+      "bucket": "medium",
+      "baseline": 0.0,
+      "verifier": 1.0,
+      "delta": 1.0
+    },
+    {
+      "bucket": "long",
+      "baseline": 0.0,
+      "verifier": 1.0,
+      "delta": 1.0
+    }
+  ],
+  "by_vuln_class": [
+    {
+      "vuln_class": "buffer_overflow",
+      "baseline": 0.5,
+      "verifier": 1.0,
+      "delta": 0.5
+    },
+    {
+      "vuln_class": "integer_overflow",
+      "baseline": 1.0,
+      "verifier": 1.0,
+      "delta": 0.0
+    },
+    {
+      "vuln_class": "other",
+      "baseline": 0.0,
+      "verifier": 1.0,
+      "delta": 1.0
+    },
+    {
+      "vuln_class": "use_after_free",
+      "baseline": 0.0,
+      "verifier": 1.0,
+      "delta": 1.0
+    }
+  ],
+  "verifier_attempts_to_success": {
+    "mean_attempts": 1.8,
+    "distribution": {
+      "1": 2,
+      "2": 2,
+      "3": 1
+    }
+  }
+}
