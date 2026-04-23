@@ -35,7 +35,7 @@ def call_llm(prompt: str, temperature: float = 0.6, max_retries: int = 2) -> str
         "model": "llama-3.3-70b-versatile",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
-        "max_tokens": 100
+        "max_tokens": 2048
     }
 
     for attempt in range(max_retries):
@@ -112,7 +112,7 @@ def call_llm_with_history(
         "model": "llama-3.3-70b-versatile",
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": 100
+        "max_tokens": 2048
     }
 
     for attempt in range(max_retries):
