@@ -1,0 +1,52 @@
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 2127091111
+INFO: Loaded 1 modules   (121266 inline 8-bit counters): 121266 [0x5baf449b0bd8, 0x5baf449ce58a), 
+INFO: Loaded 1 PC tables (121266 PCs): 121266 [0x5baf449ce590,0x5baf44ba80b0), 
+/out/fuzz-eval: Running 1 inputs 1 time(s) each.
+Running: /tmp/poc
+=================================================================
+==9==ERROR: AddressSanitizer: attempting double-free on 0x5030000006d0 in thread T0:
+    #0 0x5baf43f19eed in operator delete(void*) /src/llvm-project/compiler-rt/lib/asan/asan_new_delete.cpp:143:3
+    #1 0x5baf43f1c729 in __gnu_cxx::new_allocator<char>::deallocate(char*, unsigned long) /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/ext/new_allocator.h:139:2
+    #2 0x5baf43f1c729 in std::allocator_traits<std::allocator<char>>::deallocate(std::allocator<char>&, char*, unsigned long) /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/bits/alloc_traits.h:492:13
+    #3 0x5baf43f1c729 in std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_destroy(unsigned long) /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/bits/basic_string.h:245:9
+    #4 0x5baf43f1c729 in std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_dispose() /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/bits/basic_string.h:240:4
+    #5 0x5baf43f1c729 in std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::~basic_string() /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/bits/basic_string.h:671:9
+    #6 0x5baf43f1c729 in LLVMFuzzerTestOneInput /src/wt/fuzz/fuzz-eval.C:37:5
+    #7 0x5baf43dd04f0 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerLoop.cpp:614:13
+    #8 0x5baf43dbb765 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:327:6
+    #9 0x5baf43dc11ff in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:862:9
+    #10 0x5baf43dec4a2 in main /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerMain.cpp:20:10
+    #11 0x7adf5cc6e082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 0323ab4806bee6f846d9ad4bccfc29afdca49a58)
+    #12 0x5baf43db394d in _start (/out/fuzz-eval+0x43094d)
+
+0x5030000006d0 is located 0 bytes inside of 27-byte region [0x5030000006d0,0x5030000006eb)
+freed by thread T0 here:
+    #0 0x5baf43f19eed in operator delete(void*) /src/llvm-project/compiler-rt/lib/asan/asan_new_delete.cpp:143:3
+    #1 0x5baf43f1c729 in __gnu_cxx::new_allocator<char>::deallocate(char*, unsigned long) /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/ext/new_allocator.h:139:2
+    #2 0x5baf43f1c729 in std::allocator_traits<std::allocator<char>>::deallocate(std::allocator<char>&, char*, unsigned long) /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/bits/alloc_traits.h:492:13
+    #3 0x5baf43f1c729 in std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_destroy(unsigned long) /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/bits/basic_string.h:245:9
+    #4 0x5baf43f1c729 in std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_dispose() /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/bits/basic_string.h:240:4
+    #5 0x5baf43f1c729 in std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::~basic_string() /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/bits/basic_string.h:671:9
+    #6 0x5baf43f1c729 in LLVMFuzzerTestOneInput /src/wt/fuzz/fuzz-eval.C:37:5
+    #7 0x5baf43dd04f0 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerLoop.cpp:614:13
+    #8 0x5baf43dbb765 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:327:6
+    #9 0x5baf43dc11ff in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:862:9
+    #10 0x5baf43dec4a2 in main /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerMain.cpp:20:10
+    #11 0x7adf5cc6e082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 0323ab4806bee6f846d9ad4bccfc29afdca49a58)
+
+previously allocated by thread T0 here:
+    #0 0x5baf43f1968d in operator new(unsigned long) /src/llvm-project/compiler-rt/lib/asan/asan_new_delete.cpp:86:3
+    #1 0x5baf43f1c3eb in void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_construct<char*>(char*, char*, std::forward_iterator_tag) /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/bits/basic_string.tcc:219:14
+    #2 0x5baf43f1c3eb in void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_construct_aux<char*>(char*, char*, std::__false_type) /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/bits/basic_string.h:255:11
+    #3 0x5baf43f1c3eb in void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_construct<char*>(char*, char*) /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/bits/basic_string.h:274:4
+    #4 0x5baf43f1c3eb in std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&) /usr/lib/gcc/x86_64-linux-gnu/10/../../../../include/c++/10/bits/basic_string.h:459:9
+    #5 0x5baf43f1c3eb in LLVMFuzzerTestOneInput /src/wt/fuzz/fuzz-eval.C:37:10
+    #6 0x5baf43dd04f0 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerLoop.cpp:614:13
+    #7 0x5baf43dbb765 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:327:6
+    #8 0x5baf43dc11ff in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:862:9
+    #9 0x5baf43dec4a2 in main /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerMain.cpp:20:10
+    #10 0x7adf5cc6e082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 0323ab4806bee6f846d9ad4bccfc29afdca49a58)
+
+SUMMARY: AddressSanitizer: double-free /src/wt/fuzz/fuzz-eval.C:37:5 in LLVMFuzzerTestOneInput
+==9==ABORTING
