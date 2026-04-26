@@ -15,6 +15,9 @@ from pathlib import Path
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
+# Path to few-shot examples file (available after Aparna's Week 3 handoff)
+FEW_SHOT_EXAMPLES_PATH = "few_shot_examples.json"
+
 
 def load_few_shot_examples(path: str = "few_shot_examples.json") -> list:
     """
@@ -30,8 +33,38 @@ def load_few_shot_examples(path: str = "few_shot_examples.json") -> list:
     """
     try:
         with open(path, "r") as f:
-            examples = json.load(f)
-        return examples
+            data = json.load(f)
+        
+        # Validate that loaded data matches the expected schema
+        if not isinstance(data, list):
+            logger.warning(
+                "few_shot_examples.json: expected a JSON array at top level, got %s. "
+                "Falling back to zero examples.",
+                type(data).__name__
+            )
+            return []
+        
+        validated = []
+        for i, item in enumerate(data):
+            if not isinstance(item, dict):
+                logger.warning("few_shot_examples.json: entry %d is not a dict — skipping.", i)
+                continue
+            if "prompt_input" not in item or "ideal_poc_output" not in item:
+                logger.warning(
+                    "few_shot_examples.json: entry %d missing required keys "
+                    "('prompt_input', 'ideal_poc_output') — skipping.",
+                    i
+                )
+                continue
+            validated.append(item)
+        
+        if not validated:
+            logger.warning(
+                "few_shot_examples.json: no valid entries found after validation. "
+                "Continuing with zero examples."
+            )
+        
+        return validated
     except FileNotFoundError:
         logger.warning(f"few_shot_examples.json not found at '{path}'. Continuing without examples.")
         return []
@@ -208,6 +241,9 @@ def build_feedback_prompt(
 
 if __name__ == "__main__":
     """Test block with mock data."""
+    # Set logging to INFO level for test output
+    logging.basicConfig(level=logging.INFO, force=True)
+    
     mock_entry = {
         "id": "CVE-2021-9999",
         "poc_bytes": 60,
@@ -218,7 +254,17 @@ if __name__ == "__main__":
         "sanitizer_type": "asan"
     }
 
-    examples = load_few_shot_examples("few_shot_examples.json")  # will warn + return []
+    examples = load_few_shot_examples(FEW_SHOT_EXAMPLES_PATH)
+    if examples:
+        logging.info(
+            "Loaded %d few-shot example(s) from '%s'.",
+            len(examples),
+            FEW_SHOT_EXAMPLES_PATH
+        )
+    else:
+        logging.info(
+            "No few-shot examples loaded — prompts will use zero examples."
+        )
 
     initial = build_initial_prompt(mock_entry, examples)
     print("=== INITIAL PROMPT ===")
