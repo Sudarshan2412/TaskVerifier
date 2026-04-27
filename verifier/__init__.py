@@ -56,3 +56,28 @@ def verify(poc_code: str, target_source_path: str) -> VerifierResult:
 
     feedback = build_feedback(compiler_result, sanitizer_result, exec_result, hallucinated)
     return VerifierResult('crash', feedback, details)
+
+
+class VerifierPipeline:
+    """
+    Wraps the verify() function to provide a class-based interface.
+    Expected by agent_loop.py per the spec.
+    """
+    
+    def __init__(self):
+        """Initialize the verifier pipeline."""
+        pass
+    
+    def verify(self, poc_code: str, cve_entry: dict) -> VerifierResult:
+        """
+        Verify a PoC against a CVE entry.
+        
+        Args:
+            poc_code: String of C code the AI generated
+            cve_entry: Dict with 'target_source' field (path to the vulnerable C file)
+            
+        Returns:
+            VerifierResult with status, feedback, and details
+        """
+        target_source_path = cve_entry["target_source"]
+        return verify(poc_code=poc_code, target_source_path=target_source_path)
