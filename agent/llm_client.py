@@ -61,7 +61,13 @@ def call_llm(prompt: str, temperature: float = 0.6, max_retries: int = 2) -> str
         except requests.exceptions.HTTPError as e:
             print(f"[DEBUG] HTTP error on attempt {attempt + 1}: {e.response.status_code}")
             if e.response.status_code == 429:
-                raise RuntimeError("Groq API rate limit hit. Wait before retrying.")
+                # Rate limit: wait and retry
+                if attempt < max_retries - 1:
+                    sleep_time = 15 + (2 ** attempt)  # 15s base + exponential backoff
+                    print(f"[DEBUG] Rate limited. Sleeping {sleep_time}s before retry...")
+                    time.sleep(sleep_time)
+                else:
+                    raise RuntimeError("Groq API rate limit hit after all retries.")
             else:
                 raise RuntimeError(f"Groq API HTTP error: {e}")
 
@@ -83,7 +89,7 @@ def call_llm_with_history(
     Args:
         conversation: List of turn dicts. Each dict must have:
                       - "role": "user" or "assistant"
-                      - "text": the message string for that turn
+                      - "content": the message string for that turn
         temperature: Sampling temperature.
         max_retries: Retry attempts on failure.
 
@@ -92,9 +98,9 @@ def call_llm_with_history(
 
     Example input:
         [
-            {"role": "user", "text": "Write a PoC for CVE-2021-1234."},
-            {"role": "assistant", "text": "Here is an attempt: ..."},
-            {"role": "user", "text": "That did not compile. Fix the malloc call."}
+            {"role": "user", "content": "Write a PoC for CVE-2021-1234."},
+            {"role": "assistant", "content": "Here is an attempt: ..."},
+            {"role": "user", "content": "That did not compile. Fix the malloc call."}
         ]
     """
     headers = {
@@ -106,7 +112,7 @@ def call_llm_with_history(
     messages = []
     for turn in conversation:
         role = "assistant" if turn["role"] == "model" else turn["role"]
-        messages.append({"role": role, "content": turn["text"]})
+        messages.append({"role": role, "content": turn["content"]})
 
     payload = {
         "model": "llama-3.3-70b-versatile",
@@ -138,7 +144,13 @@ def call_llm_with_history(
         except requests.exceptions.HTTPError as e:
             print(f"[DEBUG] HTTP error on attempt {attempt + 1}: {e.response.status_code}")
             if e.response.status_code == 429:
-                raise RuntimeError("Groq API rate limit hit. Wait before retrying.")
+                # Rate limit: wait and retry
+                if attempt < max_retries - 1:
+                    sleep_time = 15 + (2 ** attempt)  # 15s base + exponential backoff
+                    print(f"[DEBUG] Rate limited. Sleeping {sleep_time}s before retry...")
+                    time.sleep(sleep_time)
+                else:
+                    raise RuntimeError("Groq API rate limit hit after all retries.")
             else:
                 raise RuntimeError(f"Groq API HTTP error: {e}")
 

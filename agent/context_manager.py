@@ -19,12 +19,12 @@ class ContextManager:
     token budget constraints with intelligent truncation.
     """
 
-    def __init__(self, max_tokens: int = 8000):
+    def __init__(self, max_tokens: int = 3000):
         """
         Initialize the context manager for a new trial.
         
         Args:
-            max_tokens: Maximum token budget (default 8000). Converted to character budget.
+            max_tokens: Maximum token budget (default 3000). Converted to character budget.
         """
         self.history: list[dict] = []
         self.max_tokens: int = max_tokens
