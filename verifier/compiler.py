@@ -1,14 +1,15 @@
+
 # verifier/compiler.py
 import subprocess
-import tempfile
 import os
-import shutil
 import re
+from pathlib import Path
 
 def compile_poc(poc_code: str, timeout_sec: int = 10) -> dict:
     """
-    Compile PoC C code with AddressSanitizer and UndefinedBehaviorSanitizer using Clang.
-    
+    Compile PoC C code with AddressSanitizer and UndefinedBehaviorSanitizer using Clang
+    inside the cybergym-sandbox Docker container.
+
     Returns:
         dict: {
             'success': bool,
@@ -29,94 +30,79 @@ def compile_poc(poc_code: str, timeout_sec: int = 10) -> dict:
         'c_file': None,
         'sanitizers_enabled': True
     }
-    
-    # Find Clang executable
-    clang_path = shutil.which('clang')
-    if not clang_path:
-        # Try common Windows paths
-        possible_paths = [
-            'C:/msys64/ucrt64/bin/clang.exe',
-            'C:/msys64/mingw64/bin/clang.exe',
-            'C:/Program Files/LLVM/bin/clang.exe'
-        ]
-        for path in possible_paths:
-            if os.path.exists(path):
-                clang_path = path
-                break
-    
-    if not clang_path:
-        result['errors'] = [{'type': 'compiler_not_found', 'message': 'Clang not found. Install via: pacman -S mingw-w64-ucrt-x86_64-clang'}]
-        return result
-    
-    # Create temporary files
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.c', delete=False) as f:
-        f.write(poc_code)
-        c_file = f.name
-    result['c_file'] = c_file
-    exe_file = c_file.replace('.c', '.exe')
-    result['binary_path'] = exe_file
-    
+
+    # Write the PoC code to the bind-mounted workspace folder
+    workspace = Path('./trial_workspace')
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    c_file_host = workspace / 'poc.c'
+    binary_host = workspace / 'poc'
+
+    c_file_host.write_text(poc_code)
+    result['c_file'] = str(c_file_host)
+    result['binary_path'] = str(binary_host)
+
     try:
-        # Compile with AddressSanitizer and UndefinedBehaviorSanitizer
-        # -fsanitize=address: Memory error detection (buffer overflows, use-after-free, etc.)
-        # -fsanitize=undefined: Detects undefined behavior (integer overflow, null dereference, etc.)
-        # -g: Include debug symbols for better stack traces
-        # -O0: Disable optimizations for clearer crash reports
-        cmd = [
-            clang_path, c_file, '-o', exe_file,
+        # Step 1: Compile inside the container
+        compile_cmd = [
+            'docker', 'run', '--rm',
+            '-v', f'{workspace.resolve()}:/sandbox',
+            'cybergym-sandbox:latest',
+            'clang', '/sandbox/poc.c', '-o', '/sandbox/poc',
             '-g', '-O0',
-            '-Wno-unused-command-line-argument'
+            '-fsanitize=address,undefined'
         ]
 
-        
         compile_result = subprocess.run(
-            cmd,
+            compile_cmd,
             capture_output=True,
             text=True,
             timeout=timeout_sec
         )
-        
+
         result['stdout'] = compile_result.stdout
         result['stderr'] = compile_result.stderr
-        
+
         # Check compilation success
         if compile_result.returncode != 0:
             errors = _parse_clang_errors(compile_result.stderr)
             result['errors'] = errors if errors else [{'type': 'compilation_error', 'message': compile_result.stderr[:500]}]
             return result
-        
-        # Run the compiled binary to trigger sanitizer crashes
-        # Set ASAN_OPTIONS to halt on error and detect leaks
-        env = os.environ.copy()
-        env['ASAN_OPTIONS'] = 'halt_on_error=1:detect_leaks=0:abort_on_error=1'
-        env['UBSAN_OPTIONS'] = 'halt_on_error=1:abort_on_error=1'
-        
+
+        # Step 2: Run the binary inside the container
+        run_cmd = [
+            'docker', 'run', '--rm',
+            '-v', f'{workspace.resolve()}:/sandbox',
+            '-e', 'ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:abort_on_error=1',
+            '-e', 'UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1',
+            'cybergym-sandbox:latest',
+            '/sandbox/poc'
+        ]
+
         try:
             run_result = subprocess.run(
-                [exe_file],
+                run_cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout_sec,
-                env=env
+                timeout=timeout_sec
             )
             result['stdout'] = run_result.stdout
             result['stderr'] = run_result.stderr
-            
+
             # Check for sanitizer errors in stderr
             if _has_sanitizer_error(run_result.stderr):
                 result['errors'] = _parse_sanitizer_output(run_result.stderr)
                 # success remains False because crash was detected
             else:
                 result['success'] = True
-                
+
         except subprocess.TimeoutExpired:
-            # Timeout might mean program hung - could be a crash
             result['errors'] = [{'type': 'timeout', 'message': f'Execution exceeded {timeout_sec}s'}]
         except Exception as e:
             result['errors'] = [{'type': 'runtime_error', 'message': str(e)}]
-        
+
         return result
-        
+
     except subprocess.TimeoutExpired:
         result['errors'] = [{'type': 'timeout', 'message': f'Compilation exceeded {timeout_sec}s'}]
         return result
