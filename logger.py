@@ -26,6 +26,7 @@ class AttemptLogRecord(BaseModel):
     verifier_stage_reached: str
     feedback_sent_to_model: str
     success: bool
+    hallucinated_symbols: list[str] = Field(default_factory=list)
 
 
 def _task_key(record: Mapping[str, Any]) -> str:
@@ -65,6 +66,7 @@ def log_attempt(
     verifier_stage: str,
     feedback_sent: str,
     success: bool,
+    hallucinated_symbols: list[str] | None = None,
 ) -> None:
     """Write one attempt-level log record."""
     record = AttemptLogRecord(
@@ -76,5 +78,6 @@ def log_attempt(
         verifier_stage_reached=verifier_stage,
         feedback_sent_to_model=feedback_sent,
         success=success,
+        hallucinated_symbols=hallucinated_symbols or [],
     )
     log_trial(record.model_dump())
