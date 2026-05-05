@@ -81,7 +81,7 @@ def call_llm(
         try:
             print(f"[DEBUG] Attempt {attempt + 1}/{max_retries}: Sending request to {BASE_URL}")
             print(f"[DEBUG] Payload model: {payload['model']}")
-            response = requests.post(BASE_URL, json=payload, headers=headers, timeout=60)
+            response = requests.post(BASE_URL, json=payload, headers=headers, timeout=(10, 30))
             print(f"[DEBUG] Response status: {response.status_code}")
             response.raise_for_status()
             data = response.json()
@@ -175,7 +175,7 @@ def call_llm_with_history(
         try:
             print(f"[DEBUG] Attempt {attempt + 1}/{max_retries}: Sending request to {BASE_URL}")
             print(f"[DEBUG] Payload model: {payload['model']}")
-            response = requests.post(BASE_URL, json=payload, headers=headers, timeout=60)
+            response = requests.post(BASE_URL, json=payload, headers=headers, timeout=(10, 30))
             print(f"[DEBUG] Response status: {response.status_code}")
             response.raise_for_status()
             data = response.json()

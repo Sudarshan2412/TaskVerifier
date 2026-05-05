@@ -12,6 +12,7 @@ Returns structured AgentResult with full transcript for logging and evaluation.
 """
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -30,7 +31,7 @@ from verifier.hallucination_detector import detect_hallucinations
 logger = logging.getLogger(__name__)
 
 # Module-level constants — tunable for rate limiting and resource control
-INTER_ATTEMPT_SLEEP_SECONDS = 5  # proactive sleep between retry attempts
+INTER_ATTEMPT_SLEEP_SECONDS = float(os.environ.get("INTER_ATTEMPT_SLEEP_SECONDS", "0"))
 FEW_SHOT_PATH = "few_shot_examples.json"  # default path; runner.py may override
 
 

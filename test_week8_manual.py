@@ -13,6 +13,8 @@ from pathlib import Path
 
 from agent.agent_loop import run_agent
 
+MAX_ATTEMPTS = int(os.environ.get("WEEK8_MAX_ATTEMPTS", "2"))
+
 # Configure logging to see debug output
 logging.basicConfig(
     level=logging.INFO,
@@ -117,7 +119,7 @@ for i, cve in enumerate(test_cves, start=1):
     
     try:
         logger.info(f"Running agent for {cve_id}...")
-        result = run_agent(cve_entry=cve, max_attempts=5)
+        result = run_agent(cve_entry=cve, max_attempts=MAX_ATTEMPTS)
         
         # Convert AgentResult dataclass to dict for JSON serialization
         result_dict = {

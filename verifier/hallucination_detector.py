@@ -7,7 +7,9 @@ STDLIB_NAMES = {
     'main', 'printf', 'malloc', 'free', 'memcpy', 'memset',
     'strlen', 'strcmp', 'strcpy', 'fopen', 'fclose', 'fprintf',
     'exit', 'abort', 'puts', 'sprintf', 'snprintf', 'atoi',
-    'calloc', 'realloc', 'memmove', 'NULL', 'stderr', 'stdout', 'stdin'
+    'calloc', 'realloc', 'memmove', 'NULL', 'stderr', 'stdout', 'stdin',
+    'perror', 'fwrite', 'fread', 'fputc', 'fgetc', 'sizeof',
+    'stdio.h', 'stdlib.h', 'string.h', 'stdint.h', 'stddef.h',
 }
 
 
@@ -26,10 +28,6 @@ def extract_symbols_from_source(source_code: str) -> set:
     # Extract #include headers: #include "header.h" or #include <header.h>
     include_pattern = re.compile(r'#include\s*[<"]([\w./]+)[>"]')
     symbols.update(include_pattern.findall(source_code))
-
-    # Extract global variable names (simple heuristic: type name; at start of line)
-    global_var_pattern = re.compile(r'^(?:static\s+)?(?:int|char|float|double|long|unsigned|void\s*\*?)\s+([a-zA-Z_]\w*)', re.MULTILINE)
-    symbols.update(global_var_pattern.findall(source_code))
 
     return symbols
 
