@@ -57,7 +57,7 @@ def pick_test_cves(subset, n=5):
     
     # Fallback: pick by index
     logger.info("Bucket field not found or filtering didn't yield enough CVEs. Using index-based selection.")
-    return [subset[i] for i in [0, 2, 4, 6, 8] if i < len(subset)][:n]
+    return [subset[i] for i in range(len(subset)) if i % 2 == 0][:n]
 
 
 def _normalize_cve_entry(cve: dict) -> dict:
@@ -110,7 +110,7 @@ results = []
 for i, cve in enumerate(test_cves, start=1):
     cve_id = cve.get("id", "UNKNOWN")
     print(f"\n{'='*70}")
-    print(f"CVE {i}/5: {cve_id}")
+    print(f"CVE {i}/{len(test_cves)}: {cve_id}")
     print(f"Bucket: {cve.get('poc_bucket', 'unknown')}")
     print(f"Vuln class: {cve.get('vuln_class', 'unknown')}")
     print(f"{'='*70}")

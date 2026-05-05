@@ -1,2 +1,0 @@
-/tmp/poc: TIFF image data, little-endian, direntries=9, height=1, width=32
-118 /tmp/poc
