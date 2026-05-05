@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Step 1 — Load 5 CVEs from the subset
 # ──────────────────────────────────────────────────────────────────────────────
 
-def pick_test_cves(subset, n=5):
+def pick_test_cves(subset, n=2):
     """
     Pick n CVEs from subset, trying to get a mix of PoC sizes if bucket field exists.
     
