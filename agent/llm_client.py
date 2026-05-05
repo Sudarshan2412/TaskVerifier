@@ -17,6 +17,36 @@ NEMOTRON_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 DEFAULT_MODEL = DEEPSEEK_MODEL
 
 
+def _extract_message_content(choice: dict) -> str | None:
+    """
+    Normalize OpenRouter/OpenAI-compatible message content.
+
+    Reasoning models may return a ``reasoning`` field while leaving
+    ``content`` as None. That is not usable by the code extractor, so callers
+    should retry instead of treating the reasoning text as the final PoC.
+    """
+    message = choice.get("message")
+    if not isinstance(message, dict):
+        print(f"[DEBUG] Choice missing message: {choice}")
+        return None
+
+    content = message.get("content")
+    if isinstance(content, str):
+        content = content.strip()
+        return content or None
+
+    if isinstance(content, list):
+        text_parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text_parts.append(part.get("text", ""))
+        content = "".join(text_parts).strip()
+        return content or None
+
+    print(f"[DEBUG] Message missing content: {message}")
+    return None
+
+
 def call_llm(
     prompt: str, 
     model: str = DEFAULT_MODEL,
@@ -40,7 +70,11 @@ def call_llm(
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
-        "max_tokens": 2048
+        "max_tokens": 2048,
+        # OpenRouter reasoning models can otherwise return only
+        # message.reasoning with content=None, which our pipeline cannot use.
+        "reasoning": {"effort": "none", "exclude": True},
+        "include_reasoning": False,
     }
 
     for attempt in range(max_retries):
@@ -59,14 +93,13 @@ def call_llm(
                 raise RuntimeError(f"OpenRouter API returned no valid choices: {err_msg}")
 
             choice = data["choices"][0]
-            if "message" not in choice or choice["message"] is None:
-                print(f"[DEBUG] Choice missing message: {choice}")
-                raise RuntimeError("OpenRouter API choice missing message field.")
-
-            result = choice["message"].get("content")
+            result = _extract_message_content(choice)
             if result is None:
-                print(f"[DEBUG] Message missing content: {choice['message']}")
-                raise RuntimeError("OpenRouter API message content is None.")
+                if attempt < max_retries - 1:
+                    print("[DEBUG] Empty assistant content; retrying request...")
+                    time.sleep(2 ** attempt)
+                    continue
+                raise RuntimeError("OpenRouter API returned empty assistant content after all retries.")
 
             print(f"[DEBUG] Successfully extracted response: {result[:50]}...")
             return result
@@ -131,7 +164,11 @@ def call_llm_with_history(
         "model": model,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": 2048
+        "max_tokens": 2048,
+        # OpenRouter reasoning models can otherwise return only
+        # message.reasoning with content=None, which our pipeline cannot use.
+        "reasoning": {"effort": "none", "exclude": True},
+        "include_reasoning": False,
     }
 
     for attempt in range(max_retries):
@@ -150,14 +187,13 @@ def call_llm_with_history(
                 raise RuntimeError(f"OpenRouter API returned no valid choices: {err_msg}")
 
             choice = data["choices"][0]
-            if "message" not in choice or choice["message"] is None:
-                print(f"[DEBUG] Choice missing message: {choice}")
-                raise RuntimeError("OpenRouter API choice missing message field.")
-
-            result = choice["message"].get("content")
+            result = _extract_message_content(choice)
             if result is None:
-                print(f"[DEBUG] Message missing content: {choice['message']}")
-                raise RuntimeError("OpenRouter API message content is None.")
+                if attempt < max_retries - 1:
+                    print("[DEBUG] Empty assistant content; retrying request...")
+                    time.sleep(2 ** attempt)
+                    continue
+                raise RuntimeError("OpenRouter API returned empty assistant content after all retries.")
 
             print(f"[DEBUG] Successfully extracted response: {result[:50]}...")
             return result
@@ -195,7 +231,7 @@ def call_llm_with_history(
 
 
 if __name__ == "__main__":
-    print(f"[DEBUG] Starting test with API key: {API_KEY[:20]}..." if API_KEY else "[DEBUG] API KEY MISSING")
+    print("[DEBUG] Starting test with API key configured." if API_KEY else "[DEBUG] API KEY MISSING")
     print(f"[DEBUG] BASE_URL: {BASE_URL}")
     print(f"Testing OpenRouter API connection with {DEFAULT_MODEL}...")
     try:
