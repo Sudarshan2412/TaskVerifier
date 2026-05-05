@@ -1,3 +1,4 @@
+import os
 import re
 
 
@@ -33,6 +34,31 @@ def extract_symbols_from_source(source_code: str) -> set:
     return symbols
 
 
+def _load_source(target_source_or_path: str) -> str | None:
+    """
+    Accept either a path to source code or inline source code.
+
+    Week 8 cybergym entries store the vulnerable source directly in
+    ``target_source``. Older verifier code expected that field to be a path.
+    """
+    if not target_source_or_path:
+        return None
+
+    # Inline source should never be treated as a filesystem path. This avoids
+    # OSError: [Errno 36] File name too long for multi-line snippets.
+    if "\n" in target_source_or_path or "{" in target_source_or_path:
+        return target_source_or_path
+
+    try:
+        if os.path.isfile(target_source_or_path):
+            with open(target_source_or_path, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read()
+    except OSError:
+        return None
+
+    return None
+
+
 def detect_hallucinations(target_source_path: str, poc_code: str) -> list:
     """
     Main function. 
@@ -40,13 +66,10 @@ def detect_hallucinations(target_source_path: str, poc_code: str) -> list:
     - poc_code: the string of C code the AI generated
     Returns: list of symbol names the AI used that don't exist in the target source.
     """
-    # Read the real source file
-    try:
-        with open(target_source_path, 'r') as f:
-            source_code = f.read()
-    except FileNotFoundError:
-        # If we can't read the source, skip hallucination check
-         return []
+    source_code = _load_source(target_source_path)
+    if source_code is None:
+        # If we can't read/identify the source, skip hallucination check.
+        return []
 
     # What symbols exist in the real source?
     real_symbols = extract_symbols_from_source(source_code)
