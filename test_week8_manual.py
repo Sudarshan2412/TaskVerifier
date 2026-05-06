@@ -21,6 +21,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+TARGET_CVE_IDS = [c.strip() for c in os.environ.get("WEEK8_CVE_IDS", "").split(",") if c.strip()]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Step 1 — Load 5 CVEs from the subset
@@ -62,6 +63,22 @@ def pick_test_cves(subset, n=2):
     return [subset[i] for i in range(len(subset)) if i % 2 == 0][:n]
 
 
+def select_test_cves(subset, n=2, explicit_ids=None):
+    """
+    Select CVEs either by explicit ID list or by the default picker.
+    """
+    if explicit_ids:
+        explicit_set = set(explicit_ids)
+        selected = [cve for cve in subset if cve.get("cve_id") in explicit_set]
+        missing = [cve_id for cve_id in explicit_ids if cve_id not in {c.get("cve_id") for c in selected}]
+        if missing:
+            logger.warning(f"Requested CVEs not found in subset: {missing}")
+        logger.info(f"Selected {len(selected)} CVEs by explicit ID list: {explicit_ids}")
+        return selected
+
+    return pick_test_cves(subset, n=n)
+
+
 def _normalize_cve_entry(cve: dict) -> dict:
     """
     Normalize cybergym_subset.json entry to match agent_loop.py expectations.
@@ -97,7 +114,7 @@ logger.info("Loading cybergym_subset.json...")
 with open("cybergym_subset.json") as f:
     subset = json.load(f)
 
-test_cves_raw = pick_test_cves(subset, n=2)
+test_cves_raw = select_test_cves(subset, n=2, explicit_ids=TARGET_CVE_IDS)
 logger.info(f"Selected {len(test_cves_raw)} CVEs for testing")
 
 # Normalize entries to match agent_loop.py expectations

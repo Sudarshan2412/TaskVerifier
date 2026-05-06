@@ -9,6 +9,7 @@ def build_feedback(
     feedback string to inject into the AI's next prompt.
     """
     lines = []
+    success = False
 
     # Case 1: Code didn't compile
     if not compiler_result.get('success'):
@@ -44,6 +45,7 @@ def build_feedback(
         if frames:
             f0 = frames[0]
             lines.append(f"Crash occurred in function '{f0['function']}' at {f0['location']}.")
+        success = True
 
     # Add hallucination warning if any invented symbols were detected
     if hallucinated_symbols:
@@ -53,5 +55,8 @@ def build_feedback(
             f"These do not exist; only use functions and variables from the target file."
         )
 
-    lines.append("Please fix the PoC and try again.")
+    if success:
+        lines.append("PoC successfully triggered the vulnerability.")
+    else:
+        lines.append("Please fix the PoC and try again.")
     return ' '.join(lines)
