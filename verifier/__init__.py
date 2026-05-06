@@ -38,6 +38,8 @@ def verify(poc_code: str, target_source_path: str) -> VerifierResult:
 
     if not compiler_result['success']:
         feedback = build_feedback(compiler_result, hallucinated_symbols=hallucinated)
+        if any(error.get('type') == 'infrastructure_error' for error in compiler_result.get('errors', [])):
+            return VerifierResult('infra_fail', feedback, details)
         return VerifierResult('compile_fail', feedback, details)
 
     binary_path = compiler_result['binary_path']

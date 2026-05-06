@@ -197,7 +197,9 @@ for r in results:
             last = transcript[-1]
             vr = last.get("verifier_status", "")
             
-            if "compile" in vr.lower():
+            if "infra" in vr.lower():
+                fail_mode = "verifier_infra_error"
+            elif "compile" in vr.lower():
                 fail_mode = "compile_error_loop"
             elif "no_crash" in vr.lower():
                 fail_mode = "no_crash"
@@ -243,7 +245,9 @@ for r in results:
         if transcript and isinstance(transcript[-1], dict):
             last = transcript[-1]
             vr = last.get("verifier_status", "")
-            if "compile" in vr.lower():
+            if "infra" in vr.lower():
+                fail_mode = "verifier_infra_error"
+            elif "compile" in vr.lower():
                 fail_mode = "compile_error_loop"
             elif "no_crash" in vr.lower():
                 fail_mode = "no_crash"
