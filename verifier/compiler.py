@@ -5,6 +5,21 @@ import os
 import re
 from pathlib import Path
 
+
+def _is_infrastructure_error(stderr: str) -> bool:
+    """Return True when Docker/sandbox setup failed before C compilation began."""
+    stderr_lower = (stderr or "").lower()
+    infrastructure_markers = [
+        "unable to find image 'cybergym-sandbox:latest'",
+        "pull access denied for cybergym-sandbox",
+        "dockerdesktoplinuxengine",
+        "error during connect",
+        "cannot connect to the docker daemon",
+        "is the docker daemon running",
+        "no such image: cybergym-sandbox:latest",
+    ]
+    return any(marker in stderr_lower for marker in infrastructure_markers)
+
 def compile_poc(poc_code: str, timeout_sec: int = 10) -> dict:
     """
     Compile PoC C code with AddressSanitizer and UndefinedBehaviorSanitizer using Clang
@@ -65,6 +80,13 @@ def compile_poc(poc_code: str, timeout_sec: int = 10) -> dict:
 
         # Check compilation success
         if compile_result.returncode != 0:
+            if _is_infrastructure_error(compile_result.stderr):
+                result['errors'] = [{
+                    'type': 'infrastructure_error',
+                    'message': compile_result.stderr[:500]
+                }]
+                return result
+
             errors = _parse_clang_errors(compile_result.stderr)
             result['errors'] = errors if errors else [{'type': 'compilation_error', 'message': compile_result.stderr[:500]}]
             return result

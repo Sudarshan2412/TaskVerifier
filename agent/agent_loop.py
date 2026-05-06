@@ -293,6 +293,18 @@ def run_agent(
                 transcript=transcript,
                 hallucinated_symbols_per_attempt=hallucinated_per_attempt
             )
+
+        if result.status == "infra_fail":
+            logger.error(f"CVE {cve_id}: verifier infrastructure failed on attempt {attempt}")
+            return AgentResult(
+                cve_id=cve_id,
+                success=False,
+                attempts=attempt,
+                final_poc=poc_code,
+                failure_reason="verifier_infrastructure_failed",
+                transcript=transcript,
+                hallucinated_symbols_per_attempt=hallucinated_per_attempt
+            )
         
         # ── SLEEP BEFORE NEXT ATTEMPT ────────────────────────────────────────
         if attempt < max_attempts:
