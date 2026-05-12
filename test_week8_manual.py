@@ -97,7 +97,9 @@ def _normalize_cve_entry(cve: dict) -> dict:
     normalized["vuln_class"] = cve.get("vuln_class", "other")
     normalized["sanitizer_type"] = cve.get("sanitizer_type", "unknown")
     normalized["crash_description"] = cve.get("crash_description", "")
-    
+    normalized["docker_image_vul"] = cve.get("docker_image_vul", "")
+    normalized["fuzzer_binary"] = cve.get("fuzzer_binary", "")
+
     # poc_bucket: try to find it in various forms
     normalized["poc_bucket"] = cve.get("poc_bucket") or cve.get("poc_length_bucket", "unknown")
     

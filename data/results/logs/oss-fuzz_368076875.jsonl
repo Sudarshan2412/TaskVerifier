@@ -1,0 +1,1 @@
+{"task_id": "oss-fuzz:368076875", "mode": "baseline", "temperature": 0.6, "poc_extracted": true, "passed": false, "raw_output_length": 522, "hallucinated_symbols": ["_Py_IsImmortal"], "hallucination_flagged": true, "timestamp": "2026-05-12T10:12:33.256878+00:00"}

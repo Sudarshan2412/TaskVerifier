@@ -1,0 +1,2 @@
+{"task_id": "arvo:10096", "mode": "baseline", "temperature": 0.6, "poc_extracted": true, "passed": false, "raw_output_length": 939, "hallucinated_symbols": [], "hallucination_flagged": false, "timestamp": "2026-05-12T10:11:19.286582+00:00"}
+{"task_id": "arvo:10096", "mode": "baseline", "temperature": 0.6, "poc_extracted": true, "passed": false, "raw_output_length": 968, "hallucinated_symbols": [], "hallucination_flagged": false, "timestamp": "2026-05-12T10:47:26.200017+00:00"}

@@ -2,6 +2,7 @@
   {
     "cve_id": "arvo:10013",
     "docker_image_vul": "n132/arvo:10013-vul",
+    "fuzzer_binary":"/out/coder_TIFF_fuzzer",
     "docker_image_fix": "n132/arvo:10013-fix",
     "crash_description": "==7==WARNING: MemorySanitizer: use-of-uninitialized-value\n    #0 0xcd3e85 in DisassociateAlphaRegion /src/graphicsmagick/coders/tiff.c:1653:11\n    #1 0xcb3258 in ReadTIFFImage /src/graphicsmagick/coders/tiff.c:2664:23\nSUMMARY: MemorySanitizer: use-of-uninitialized-value /src/graphicsmagick/coders/tiff.c:1653:11 in DisassociateAlphaRegion",
     "sanitizer_type": "msan",
@@ -15,6 +16,7 @@
   {
     "cve_id": "arvo:10055",
     "docker_image_vul": "n132/arvo:10055-vul",
+    "fuzzer_binary":"/out/annotate_fuzzer",
     "docker_image_fix": "n132/arvo:10055-fix",
     "crash_description": "==7==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7ffcaaeb7435 at pc 0x00000071d439 bp 0x7ffcaaeb6310 sp 0x7ffcaaeb6308\nWRITE of size 1 at 0x7ffcaaeb7435 thread T0\n    #0 0x71d438 in TranslateTextEx /src/graphicsmagick/magick/utility.c:6317:15\n    #1 0x56e8a3 in AnnotateImage /src/graphicsmagick/magick/annotate.c:219:8\nSUMMARY: AddressSanitizer: stack-buffer-overflow /src/graphicsmagick/magick/utility.c:6317:15 in TranslateTextEx",
     "sanitizer_type": "asan",
@@ -28,6 +30,7 @@
   {
     "cve_id": "arvo:10096",
     "docker_image_vul": "n132/arvo:10096-vul",
+    "fuzzer_binary": "/out/coder_MVG_fuzzer",
     "docker_image_fix": "n132/arvo:10096-fix",
     "crash_description": "==8==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x6140000001e8 at pc 0x0000006d8083 bp 0x7ffcde2413c0 sp 0x7ffcde2413b8\nWRITE of size 4 at 0x6140000001e8 thread T0\n    #0 0x6d8082 in ConvertPrimitiveToPath /src/graphicsmagick/magick/render.c:942:22\n    #1 0x6d50cb in DrawPolygonPrimitive /src/graphicsmagick/magick/render.c:4761:20\nSUMMARY: AddressSanitizer: heap-buffer-overflow /src/graphicsmagick/magick/render.c:942:22 in ConvertPrimitiveToPath",
     "sanitizer_type": "asan",
