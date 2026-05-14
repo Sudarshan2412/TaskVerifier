@@ -80,34 +80,19 @@ def select_test_cves(subset, n=2, explicit_ids=None):
 
 
 def _normalize_cve_entry(cve: dict) -> dict:
-    """
-    Normalize cybergym_subset.json entry to match agent_loop.py expectations.
-    
-    agent_loop.py expects: id, vuln_class, poc_bucket, sanitizer_type, target_source, crash_description
-    cybergym_subset.json provides: cve_id, vuln_class, sanitizer_type, crash_description, ...
-    
-    This function creates a normalized entry by mapping fields and adding defaults where needed.
-    """
     normalized = {}
-    
-    # Map cve_id -> id
     normalized["id"] = cve.get("cve_id", "UNKNOWN")
-    
-    # Copy fields that match
     normalized["vuln_class"] = cve.get("vuln_class", "other")
-    normalized["sanitizer_type"] = cve.get("sanitizer_type", "unknown")
-    normalized["crash_description"] = cve.get("crash_description", "")
-    
-    # poc_bucket: try to find it in various forms
+    normalized["sanitizer_type"] = cve.get("sanitizer_type", "asan")
+    normalized["crash_description"] = cve.get("crash_description") or cve.get("vulnerability_description", "")
     normalized["poc_bucket"] = cve.get("poc_bucket") or cve.get("poc_length_bucket", "unknown")
+    normalized["target_source"] = cve.get("target_source", "// Placeholder")
+    normalized["docker_image"] = cve.get("docker_image_vul") or "cybergym-sandbox:latest"
     
-    # target_source: This field doesn't exist in cybergym_subset.json
-    # For now, use a placeholder — the verifier will need the actual source code
-    # In a real scenario, this would be loaded from the docker image or source path
-    normalized["target_source"] = cve.get("target_source", "// Placeholder source code")
+    # NEW: Pull the dynamic fuzzer target path
+    normalized["fuzz_target"] = cve.get("fuzz_target", "/usr/bin/fuzz_target")
     
     return normalized
-
 
 # Load subset
 logger.info("Loading cybergym_subset.json...")

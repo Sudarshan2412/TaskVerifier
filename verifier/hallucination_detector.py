@@ -57,28 +57,19 @@ def _load_source(target_source_or_path: str) -> str | None:
     return None
 
 
-def detect_hallucinations(target_source_path: str, poc_code: str) -> list:
+def detect_hallucinations(target_source_code: str, poc_code: str) -> list:
     """
-    Main function. 
-    - target_source_path: path to the real vulnerable C file
-    - poc_code: the string of C code the AI generated
-    Returns: list of symbol names the AI used that don't exist in the target source.
+    Standardize the argument name to match the call in __init__.py
     """
-    source_code = _load_source(target_source_path)
-    if source_code is None:
-        # If we can't read/identify the source, skip hallucination check.
+    source_code = _load_source(target_source_code)
+    if not source_code:
         return []
 
-    # What symbols exist in the real source?
     real_symbols = extract_symbols_from_source(source_code)
-
-    # What symbols does the AI's PoC use?
     poc_symbols = extract_symbols_from_source(poc_code)
 
-    # Hallucinated = in PoC but NOT in real source AND not a standard lib name
     hallucinated = [
         sym for sym in poc_symbols
         if sym not in real_symbols and sym not in STDLIB_NAMES
     ]
-
     return hallucinated

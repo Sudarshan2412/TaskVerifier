@@ -223,10 +223,7 @@ def run_agent(
         
         # ── HALLUCINATION DETECTION ──────────────────────────────────────────
         try:
-            hallucinated_symbols = detect_hallucinations(
-                target_source_path=cve_entry["target_source"],
-                poc_code=poc_code
-            )
+            hallucinated_symbols = detect_hallucinations(target_source_code=cve_entry["target_source"], poc_code=poc_code)
             last_hallucinated_symbols = hallucinated_symbols
             hallucinated_per_attempt.append(hallucinated_symbols)
             

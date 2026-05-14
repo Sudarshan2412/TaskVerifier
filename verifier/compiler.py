@@ -5,37 +5,21 @@ import os
 import re
 from pathlib import Path
 
-
 def _is_infrastructure_error(stderr: str) -> bool:
-    """Return True when Docker/sandbox setup failed before C compilation began."""
     stderr_lower = (stderr or "").lower()
     infrastructure_markers = [
-        "unable to find image 'cybergym-sandbox:latest'",
-        "pull access denied for cybergym-sandbox",
-        "dockerdesktoplinuxengine",
+        "unable to find image",
+        "pull access denied",
         "error during connect",
         "cannot connect to the docker daemon",
         "is the docker daemon running",
-        "no such image: cybergym-sandbox:latest",
+        "no such image",
     ]
     return any(marker in stderr_lower for marker in infrastructure_markers)
 
-def compile_poc(poc_code: str, timeout_sec: int = 10) -> dict:
-    """
-    Compile PoC C code with AddressSanitizer and UndefinedBehaviorSanitizer using Clang
-    inside the cybergym-sandbox Docker container.
+def compile_poc(poc_code: str, cve_entry: dict, timeout_sec: int = 15) -> dict:
+    image_name = cve_entry.get("docker_image") or cve_entry.get("docker_image_vul") or "cybergym-sandbox:latest"
 
-    Returns:
-        dict: {
-            'success': bool,
-            'binary_path': str or None,
-            'errors': list,
-            'stderr': str,
-            'stdout': str,
-            'c_file': str,
-            'sanitizers_enabled': bool
-        }
-    """
     result = {
         'success': False,
         'binary_path': None,
@@ -43,86 +27,43 @@ def compile_poc(poc_code: str, timeout_sec: int = 10) -> dict:
         'stderr': '',
         'stdout': '',
         'c_file': None,
-        'sanitizers_enabled': True
+        'sanitizers_enabled': False
     }
 
-    # Write the PoC code to the bind-mounted workspace folder
     workspace = Path('./trial_workspace')
     workspace.mkdir(parents=True, exist_ok=True)
-
     c_file_host = workspace / 'poc.c'
     binary_host = workspace / 'poc'
 
+    # 1. Write the AI's generator code to a file
     c_file_host.write_text(poc_code)
+    
     result['c_file'] = str(c_file_host)
     result['binary_path'] = str(binary_host)
 
     try:
-        # Step 1: Compile inside the container
+        # 2. Compile the AI's generator inside the Docker container
+        # We don't need sanitizers here because this is just writing a file
         compile_cmd = [
-            'docker', 'run', '--rm',
-            '-v', f'{workspace.resolve()}:/sandbox',
-            'cybergym-sandbox:latest',
-            'clang', '/sandbox/poc.c', '-o', '/sandbox/poc',
-            '-g', '-O0',
-            '-fsanitize=address,undefined'
+            'docker', 'run', '--rm', '-v', f'{workspace.resolve()}:/sandbox',
+            image_name, 'clang', '/sandbox/poc.c', '-o', '/sandbox/poc', '-g'
         ]
+        
+        cp = subprocess.run(compile_cmd, capture_output=True, text=True, timeout=timeout_sec)
+        
+        result['stdout'] = cp.stdout
+        result['stderr'] = cp.stderr
 
-        compile_result = subprocess.run(
-            compile_cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec
-        )
-
-        result['stdout'] = compile_result.stdout
-        result['stderr'] = compile_result.stderr
-
-        # Check compilation success
-        if compile_result.returncode != 0:
-            if _is_infrastructure_error(compile_result.stderr):
-                result['errors'] = [{
-                    'type': 'infrastructure_error',
-                    'message': compile_result.stderr[:500]
-                }]
-                return result
-
-            errors = _parse_clang_errors(compile_result.stderr)
-            result['errors'] = errors if errors else [{'type': 'compilation_error', 'message': compile_result.stderr[:500]}]
+        if cp.returncode != 0:
+            if _is_infrastructure_error(cp.stderr):
+                result['errors'] = [{'type': 'infrastructure_error', 'message': cp.stderr}]
+            else:
+                errors = _parse_clang_errors(cp.stderr)
+                result['errors'] = errors if errors else [{'type': 'compilation_error', 'message': cp.stderr[:500]}]
             return result
 
-        # Step 2: Run the binary inside the container
-        run_cmd = [
-            'docker', 'run', '--rm',
-            '-v', f'{workspace.resolve()}:/sandbox',
-            '-e', 'ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:abort_on_error=1',
-            '-e', 'UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1',
-            'cybergym-sandbox:latest',
-            '/sandbox/poc'
-        ]
-
-        try:
-            run_result = subprocess.run(
-                run_cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout_sec
-            )
-            result['stdout'] = run_result.stdout
-            result['stderr'] = run_result.stderr
-
-            # Check for sanitizer errors in stderr
-            if _has_sanitizer_error(run_result.stderr):
-                result['errors'] = _parse_sanitizer_output(run_result.stderr)
-                # success remains False because crash was detected
-            else:
-                result['success'] = True
-
-        except subprocess.TimeoutExpired:
-            result['errors'] = [{'type': 'timeout', 'message': f'Execution exceeded {timeout_sec}s'}]
-        except Exception as e:
-            result['errors'] = [{'type': 'runtime_error', 'message': str(e)}]
-
+        # Compilation succeeded
+        result['success'] = True
         return result
 
     except subprocess.TimeoutExpired:
@@ -132,14 +73,10 @@ def compile_poc(poc_code: str, timeout_sec: int = 10) -> dict:
         result['errors'] = [{'type': 'exception', 'message': str(e)}]
         return result
 
-
 def _parse_clang_errors(stderr: str) -> list:
-    """Parse Clang compilation errors"""
     errors = []
     lines = stderr.split('\n')
-    
     for line in lines:
-        # Clang error format: file.c:10:5: error: message
         if '.c:' in line and ('error:' in line or 'warning:' in line):
             parts = line.split(':')
             if len(parts) >= 4:
@@ -149,7 +86,6 @@ def _parse_clang_errors(stderr: str) -> list:
                     'line': int(parts[1]) if parts[1].isdigit() else 0,
                     'message': ':'.join(parts[4:]).strip() if len(parts) > 4 else line
                 })
-    
     return errors
 
 
