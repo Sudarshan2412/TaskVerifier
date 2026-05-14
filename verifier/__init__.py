@@ -16,11 +16,26 @@ class VerifierResult:
 
 def _extract_real_asan(stderr: str) -> dict:
     """Parses actual AddressSanitizer output from Docker's stderr stream."""
-    match = re.search(r'ERROR: (AddressSanitizer: [^\n]+)', stderr)
+    import re
+    
+    # Look for the exact ASAN/MSAN error type in the output
+    match = re.search(r'(AddressSanitizer|MemorySanitizer):\s*([^\n\r]+)', stderr)
+    
     if match:
-        return {'crashed': True, 'crash_type': match.group(1), 'crash_address': 'See logs', 'stack_frames': []}
-    return {'crashed': True, 'crash_type': 'Unknown Crash or Fatal Docker Error', 'crash_address': 'Unknown', 'stack_frames': []}
-
+        return {
+            'crashed': True, 
+            'crash_type': f"{match.group(1)}: {match.group(2)}", 
+            'crash_address': 'See terminal log', 
+            'stack_frames': []
+        }
+        
+    return {
+        'crashed': True, 
+        'crash_type': 'Crash triggered (See terminal for raw ASAN trace)', 
+        'crash_address': 'Unknown', 
+        'stack_frames': []
+    }
+    
 def verify(poc_code: str, cve_entry: dict) -> VerifierResult:
     details = {}
     target_src = cve_entry.get("target_source", "")
