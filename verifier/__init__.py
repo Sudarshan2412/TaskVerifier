@@ -61,9 +61,22 @@ def verify(poc_code: str, cve_entry: dict) -> VerifierResult:
     details['execution'] = exec_result
 
     if not exec_result['triggered']:
-        feedback = build_feedback(compiler_result, execution_result=exec_result, 
+        # Get the standard feedback (which now includes the fuzzer stdout/stderr)
+        base_feedback = build_feedback(compiler_result, execution_result=exec_result, 
                                   hallucinated_symbols=hallucinated, target_source=target_src, image_name=image_name)
-        return VerifierResult('no_crash', feedback, details)
+        
+        # --- NEW: SELF-CRITIQUE INJECTION ---
+        # Force the LLM to act as its own critic on the next iteration
+        self_reflection_prompt = (
+            f"{base_feedback}\n\n"
+            f"=== CRITIQUE REQUIRED ===\n"
+            f"Before writing the updated C code, you MUST write a short paragraph of analysis. "
+            f"Read the fuzzer output provided above and explain EXACTLY why the previous payload "
+            f"was rejected or failed to reach the vulnerable code. "
+            f"State your new strategy clearly, and THEN output the C code."
+        )
+        
+        return VerifierResult('no_crash', self_reflection_prompt, details)
 
     # 4. Crash parsing (REAL output)
     stderr_output = exec_result.get('stderr', '')
