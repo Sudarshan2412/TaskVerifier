@@ -28,20 +28,16 @@ def _normalize_cve_entry(cve: dict[str, Any]) -> dict[str, Any]:
     cybergym_subset.json provides: cve_id, vuln_class, sanitizer_type, crash_description, ...
     """
     normalized = {}
-    
-    # Map cve_id -> id
     normalized["id"] = cve.get("cve_id") or cve.get("id") or "UNKNOWN"
-    
-    # Copy fields that match or have fallbacks
     normalized["vuln_class"] = cve.get("vuln_class", "other")
-    normalized["sanitizer_type"] = cve.get("sanitizer_type", "unknown")
+    normalized["sanitizer_type"] = cve.get("sanitizer_type", "asan") # Default to asan
     normalized["crash_description"] = cve.get("crash_description") or cve.get("vulnerability_description", "")
-    
-    # poc_bucket: try to find it in various forms
     normalized["poc_bucket"] = cve.get("poc_bucket") or cve.get("poc_length_bucket", "unknown")
     
-    # target_source: Required by agent_loop but missing in some versions of the subset JSON.
-    # We fallback to a placeholder; real verifiers would load this from disk or Docker.
+    # CHANGE: Map the dynamic Docker image
+    normalized["docker_image"] = cve.get("docker_image_vul") or "cybergym-sandbox:latest"
+    
+    # CHANGE: Ensure target_source is ALWAYS the actual code string for the LLM and Verifier
     normalized["target_source"] = cve.get("target_source", "// Placeholder source code")
     
     return normalized
