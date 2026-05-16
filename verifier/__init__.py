@@ -51,7 +51,7 @@ def verify(poc_code: str, cve_entry: dict) -> VerifierResult:
 
     if not compiler_result['success']:
         feedback = build_feedback(compiler_result, hallucinated_symbols=hallucinated, 
-                                  target_source=target_src, image_name=image_name)
+                                  target_source=target_src, image_name=image_name, poc_code=poc_code) # <--- ADDED HERE
         if any(error.get('type') == 'infrastructure_error' for error in compiler_result.get('errors', [])):
             return VerifierResult('infra_fail', feedback, details)
         return VerifierResult('compile_fail', feedback, details)
@@ -61,9 +61,8 @@ def verify(poc_code: str, cve_entry: dict) -> VerifierResult:
     details['execution'] = exec_result
 
     if not exec_result['triggered']:
-        # Get the standard feedback (which now includes the fuzzer stdout/stderr)
         base_feedback = build_feedback(compiler_result, execution_result=exec_result, 
-                                  hallucinated_symbols=hallucinated, target_source=target_src, image_name=image_name)
+                                  hallucinated_symbols=hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code) # <--- ADDED HERE
         
         # --- NEW: SELF-CRITIQUE INJECTION ---
         # Force the LLM to act as its own critic on the next iteration
@@ -91,7 +90,7 @@ def verify(poc_code: str, cve_entry: dict) -> VerifierResult:
     details['sanitizer'] = sanitizer_result
 
     feedback = build_feedback(compiler_result, sanitizer_result, exec_result, 
-                              hallucinated, target_source=target_src, image_name=image_name)
+                              hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code) # <--- ADDED HERE
     
     return VerifierResult('crash', feedback, details)
 
