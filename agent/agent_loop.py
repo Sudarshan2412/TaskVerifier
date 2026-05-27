@@ -16,6 +16,8 @@ import os
 import time
 from dataclasses import dataclass, field
 
+from logger import NullStepLogger
+
 from agent import llm_client
 from agent.prompt_builder import (
     build_initial_prompt,
@@ -86,7 +88,8 @@ class AgentResult:
 def run_agent(
     cve_entry: dict,
     max_attempts: int = 5,
-    few_shot_examples: list = None
+    few_shot_examples: list = None,
+    step_logger=None,
 ) -> AgentResult:
     """
     Main public function. Called by runner.py for each CVE.
@@ -115,6 +118,9 @@ def run_agent(
     if few_shot_examples is None:
         few_shot_examples = load_few_shot_examples(FEW_SHOT_PATH)
     
+    # Initialize step logger (no-op by default)
+    sl = step_logger or NullStepLogger()
+    
     # Initialize state
     ctx = ContextManager()
     ctx.reset()
@@ -136,11 +142,13 @@ def run_agent(
     
     for attempt in range(1, max_attempts + 1):
         logger.debug(f"CVE {cve_id}: Attempt {attempt}/{max_attempts}")
+        sl.log_attempt_header(attempt, max_attempts)
         
         # ── PROMPT CONSTRUCTION ──────────────────────────────────────
         try:
             if attempt == 1:
                 prompt = build_initial_prompt(cve_entry, few_shot_examples)
+                sl.log_prompt_built("initial", len(prompt))
             else:
                 prompt = build_feedback_prompt(
                     cve_entry=cve_entry,
@@ -149,6 +157,7 @@ def run_agent(
                     previous_poc=last_poc,
                     attempt_number=attempt - 1
                 )
+                sl.log_prompt_built("feedback", len(prompt))
         except Exception as e:
             logger.error(f"CVE {cve_id}: Failed to build prompt: {e}")
             return AgentResult(
@@ -164,9 +173,12 @@ def run_agent(
         ctx.add_user_message(prompt)
         
         # ── LLM CALL ─────────────────────────────────────────────────────────
+        llm_start = time.time()
         try:
             raw_response = llm_client.call_llm_with_history(ctx.get_history())
+            llm_elapsed = time.time() - llm_start
             logger.debug(f"CVE {cve_id}: Attempt {attempt} LLM response received ({len(raw_response)} chars)")
+            sl.log_llm_response(llm_elapsed, len(raw_response))
         except Exception as e:
             logger.error(f"CVE {cve_id}: Attempt {attempt} LLM call failed (unrecoverable): {e}")
             transcript_entry = {
@@ -197,8 +209,10 @@ def run_agent(
             poc_code = extract_code(raw_response)
             last_poc = poc_code
             logger.debug(f"CVE {cve_id}: Attempt {attempt} code extracted ({len(poc_code)} chars)")
+            sl.log_extraction(True, len(poc_code))
         except ExtractionError as e:
             logger.warning(f"CVE {cve_id}: Attempt {attempt} extraction failed: {e}")
+            sl.log_extraction(False, error=str(e))
             transcript_entry = {
                 "attempt": attempt,
                 "prompt": prompt,
@@ -227,6 +241,7 @@ def run_agent(
             last_hallucinated_symbols = hallucinated_symbols
             hallucinated_per_attempt.append(hallucinated_symbols)
             
+            sl.log_hallucination(hallucinated_symbols)
             if hallucinated_symbols:
                 logger.warning(f"CVE {cve_id}: Attempt {attempt} hallucinated symbols: {hallucinated_symbols}")
         except Exception as e:
@@ -243,6 +258,23 @@ def run_agent(
                         previous_feedback=last_feedback_text    # already tracked in the loop
                     )
             logger.debug(f"CVE {cve_id}: Attempt {attempt} verifier status: {result.status}")
+            
+            # Emit verifier step log
+            v_details = result.details if hasattr(result, "details") else {}
+            compile_ok = v_details.get("compiler", {}).get("success", True) if v_details else True
+            compile_err = v_details.get("compiler", {}).get("stderr", "") if v_details else ""
+            exec_info = v_details.get("execution", {})
+            exec_ok = exec_info.get("triggered", None) if exec_info else None
+            exec_msg = exec_info.get("message", "") if exec_info else ""
+            san_info = v_details.get("sanitizer", {})
+            crash_type = san_info.get("crash_type", "") if san_info else ""
+            sl.log_verifier(
+                compile_ok=compile_ok,
+                exec_ok=exec_ok,
+                crash_type=crash_type,
+                compile_error=compile_err,
+                exec_message=exec_msg,
+            )
         except Exception as e:
             logger.error(f"CVE {cve_id}: Attempt {attempt} verifier raised exception: {e}")
             transcript_entry = {
@@ -285,6 +317,7 @@ def run_agent(
         # Map verifier status: "crash" indicates successful PoC (vulnerability triggered)
         if result.status == "crash":
             logger.info(f"CVE {cve_id}: SUCCESS on attempt {attempt}")
+            sl.log_outcome(True, attempt)
             return AgentResult(
                 cve_id=cve_id,
                 success=True,
@@ -297,6 +330,7 @@ def run_agent(
 
         if result.status == "infra_fail":
             logger.error(f"CVE {cve_id}: verifier infrastructure failed on attempt {attempt}")
+            sl.log_outcome(False, attempt, "verifier_infrastructure_failed")
             return AgentResult(
                 cve_id=cve_id,
                 success=False,
@@ -314,6 +348,7 @@ def run_agent(
     
     # ── ALL ATTEMPTS EXHAUSTED ───────────────────────────────────────────────
     logger.warning(f"CVE {cve_id}: FAILURE after {max_attempts} attempts")
+    sl.log_outcome(False, max_attempts, failure_reason if 'failure_reason' in dir() else "max_attempts_reached")
     
     # Check if extraction failed on all attempts
     extraction_failed_all = all(

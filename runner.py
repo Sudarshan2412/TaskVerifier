@@ -9,7 +9,7 @@ from typing import Any
 
 from agent.agent_loop import run_agent, AgentResult
 from evaluator import evaluate
-from logger import log_attempt
+from logger import StepLogger, ReportWriter
 
 
 def _task_id(vuln: dict[str, Any]) -> str:
@@ -21,71 +21,40 @@ def _poc_bucket(vuln: dict[str, Any]) -> str:
 
 
 def _normalize_cve_entry(cve: dict[str, Any]) -> dict[str, Any]:
-    """
-    Normalize cybergym_subset.json entry to match agent_loop.py expectations.
-    
-    agent_loop.py expects: id, vuln_class, poc_bucket, sanitizer_type, target_source, crash_description
-    cybergym_subset.json provides: cve_id, vuln_class, sanitizer_type, crash_description, ...
-    """
     normalized = {}
     normalized["id"] = cve.get("cve_id") or cve.get("id") or "UNKNOWN"
     normalized["vuln_class"] = cve.get("vuln_class", "other")
-    normalized["sanitizer_type"] = cve.get("sanitizer_type", "asan") # Default to asan
+    normalized["sanitizer_type"] = cve.get("sanitizer_type", "asan")
     normalized["crash_description"] = cve.get("crash_description") or cve.get("vulnerability_description", "")
     normalized["poc_bucket"] = cve.get("poc_bucket") or cve.get("poc_length_bucket", "unknown")
-    
-    # CHANGE: Map the dynamic Docker image
     normalized["docker_image"] = cve.get("docker_image_vul") or "cybergym-sandbox:latest"
-    
-    # CHANGE: Ensure target_source is ALWAYS the actual code string for the LLM and Verifier
     normalized["target_source"] = cve.get("target_source", "// Placeholder source code")
-    
+    normalized["fuzz_target"] = cve.get("fuzz_target", "/usr/bin/fuzz_target")
     return normalized
 
 
-def run_trial(vuln: dict[str, Any], use_verifiers: bool = True, max_attempts: int = 5) -> dict[str, Any]:
-    """Run a single trial using the real agent loop and return a structured result record."""
-    attempts_budget = max_attempts if use_verifiers else 1
+def run_trial(
+    vuln: dict[str, Any], 
+    use_verifiers: bool = True, 
+    max_attempts: int = 5,
+    step_logger: StepLogger = None
+) -> tuple[dict[str, Any], AgentResult]:
     
-    # Normalize the entry for the agent
+    attempts_budget = max_attempts if use_verifiers else 1
     cve_entry = _normalize_cve_entry(vuln)
     task_id = cve_entry["id"]
     
     # Execute the real agent loop
-    result: AgentResult = run_agent(cve_entry, max_attempts=attempts_budget)
+    result: AgentResult = run_agent(cve_entry, max_attempts=attempts_budget, step_logger=step_logger)
 
-    # Log each attempt in the transcript
-    for step in result.transcript:
-        # Map agent_loop keys to logger expected keys
-        log_attempt(
-            task_id=task_id,
-            attempt=step["attempt"],
-            poc_code=step["extracted_poc"],
-            raw_model_output=step["raw_response"],
-            verifier_stage=step["verifier_stage"],
-            feedback_sent=step["verifier_feedback"],
-            success=bool(result.success and step["attempt"] == result.attempts),
-            hallucinated_symbols=step.get("hallucinated_symbols", []),
-        )
-
-    # Final evaluation against CyberGym standards
     expected = str(vuln.get("vulnerability_description") or vuln.get("crash_description") or "")
-    
-    # For the evaluation: 
-    # 1. pre_patch_crashed is True if the verifier reached "crash" status
     pre_crashed = result.success 
-    
-    # 2. We use the last attempt's verifier feedback/stage as the "type" for matching
-    # In a real run, the verifier stage "success" or status "crash" implies a match.
     pre_crash_type = expected if pre_crashed else "no crash triggered"
-    
-    # 3. Post-patch check is currently out of scope for the agent loop (handled by Diya's verifier internals)
-    # but the evaluator expects it. We assume False (no crash) unless specifically flagged.
     post_crashed = False 
     
     verdict = evaluate(pre_crashed, pre_crash_type, post_crashed, expected)
 
-    return {
+    record = {
         "task_id": task_id,
         "poc_length_bucket": _poc_bucket(vuln),
         "vuln_class": str(vuln.get("vuln_class") or "other"),
@@ -96,6 +65,8 @@ def run_trial(vuln: dict[str, Any], use_verifiers: bool = True, max_attempts: in
         "final_poc": result.final_poc,
         "failure_reason": result.failure_reason
     }
+    
+    return record, result
 
 
 def run_experiment(
@@ -104,7 +75,7 @@ def run_experiment(
     limit: int | None = None,
     max_attempts: int = 5,
 ) -> list[dict[str, Any]]:
-    """Run all trials from a subset JSON and return per-task records."""
+    
     subset_text = Path(subset_path).read_text(encoding="utf-8")
     subset = json.loads(subset_text)
     
@@ -120,16 +91,41 @@ def run_experiment(
 
     results: list[dict[str, Any]] = []
     total = len(tasks)
+    
+    step_logger = StepLogger()
+    report_writer = ReportWriter(max_attempts=max_attempts)
+    step_logger.log_run_header(total, max_attempts)
+    
     for index, vuln in enumerate(tasks, start=1):
-        mode = "verifier" if use_verifiers else "baseline"
         task_id = _task_id(vuln)
-        print(f"[{index}/{total}] Running {task_id} ({mode})")
+        bucket = _poc_bucket(vuln)
+        vuln_class = vuln.get("vuln_class", "unknown")
+        
+        step_logger.log_cve_header(index, total, task_id, bucket, vuln_class)
 
         started = time.time()
         try:
-            record = run_trial(vuln, use_verifiers=use_verifiers, max_attempts=max_attempts)
+            record, agent_result = run_trial(
+                vuln, 
+                use_verifiers=use_verifiers, 
+                max_attempts=max_attempts,
+                step_logger=step_logger
+            )
+            
+            report_writer.add_cve_result(
+                cve_id=task_id,
+                bucket=bucket,
+                vuln_class=vuln_class,
+                success=record["success"],
+                attempts=record["attempts"],
+                failure_reason=record["failure_reason"] or record["reason"],
+                final_poc=record["final_poc"],
+                transcript=agent_result.transcript,
+                hallucinated_symbols_per_attempt=agent_result.hallucinated_symbols_per_attempt
+            )
+            
         except Exception as e:
-            print(f"  !! Error running {task_id}: {e}")
+            step_logger.log_cve_error(task_id, str(e))
             record = {
                 "task_id": task_id,
                 "success": False,
@@ -137,11 +133,21 @@ def run_experiment(
                 "reason": f"CRASH: {str(e)}",
                 "use_verifiers": use_verifiers
             }
+            report_writer.add_cve_result(
+                cve_id=task_id, bucket=bucket, vuln_class=vuln_class,
+                success=False, attempts=0, failure_reason="exception",
+                final_poc="", transcript=[], hallucinated_symbols_per_attempt=[],
+                error=str(e)
+            )
             
         record["elapsed_seconds"] = round(time.time() - started, 2)
         results.append(record)
+        
+        if index < total:
+            step_logger.log_sleep(2)
+            time.sleep(2)
 
-        status = "PASS" if record.get("success") else "FAIL"
-        print(f"  -> {status} in {record.get('attempts', 0)} attempt(s) ({record['elapsed_seconds']}s)")
+    report_path = report_writer.write_report("logs")
+    print(f"\n[INFO] Markdown report written to {report_path}")
 
     return results
