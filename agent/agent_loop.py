@@ -126,7 +126,7 @@ def run_agent(
     last_feedback_text = ""
     last_hallucinated_symbols = []
     
-    cve_id = cve_entry["id"]
+    cve_id = cve_entry.get("id") or cve_entry.get("cve_id", "unknown")
     
     logger.info(f"Starting agent loop for CVE {cve_id} with max_attempts={max_attempts}")
     
@@ -237,7 +237,11 @@ def run_agent(
         
         # ── VERIFIER ─────────────────────────────────────────────────────────
         try:
-            result = verifier.verify(poc_code=poc_code, cve_entry=cve_entry)
+            result = verifier.verify(
+                        poc_code=poc_code,
+                        cve_entry=cve_entry,
+                        previous_feedback=last_feedback_text    # already tracked in the loop
+                    )
             logger.debug(f"CVE {cve_id}: Attempt {attempt} verifier status: {result.status}")
         except Exception as e:
             logger.error(f"CVE {cve_id}: Attempt {attempt} verifier raised exception: {e}")

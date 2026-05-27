@@ -133,7 +133,7 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
         raise KeyError(f"cve_entry missing required fields: {missing_fields}")
     
     # Extract fields
-    cve_id = cve_entry["id"]
+    cve_id = cve_entry.get("id") or cve_entry.get("cve_id", "unknown")
     vuln_class = cve_entry["vuln_class"]
     poc_bucket = cve_entry["poc_bucket"]
     sanitizer_type = cve_entry["sanitizer_type"]
@@ -162,12 +162,45 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
     if few_shot_block:
         prompt += f"\n{few_shot_block}\n"
     
+    hint = cve_entry.get("hint", "")
+    if hint:
+        hint += (
+            "\nIMPORTANT: In MVG, text strings must use single quotes: text 0,0 '%[...]' "
+            "NOT double quotes. Double-quoted strings are parsed differently."
+        )
+        prompt += f"\n\nIMPORTANT HINT:\n{hint}"
+    
+    fuzz_target = cve_entry.get("fuzz_target", "")
+    if fuzz_target and any(fmt in fuzz_target.upper() for fmt in ["MVG", "SVG", "PS", "PDF", "JPEG", "PNG"]):
+        prompt += (
+            f"\n\nThe fuzz target binary is: {fuzz_target}\n"
+            f"The input file must be a valid {fuzz_target.split('/')[-1].replace('coder_','').replace('_fuzzer','')} format file.\n"
+            f"\nCRITICAL C WRITING RULE — to write a literal '%' character to a file:\n"
+            f"  CORRECT:   fputc('%', f);\n"
+            f"  WRONG:     fprintf(f, \"%%\");   // This writes % to the file but TranslateTextEx\n"
+            f"             // will then see %% and treat it as an escaped percent,\n"
+            f"             // so escape sequences like %[ are NEVER triggered.\n"
+            f"\nFor MVG format specifically, use this exact C pattern:\n"
+            f"```c\n"
+            f"fprintf(f, \"push graphic-context\\n\");\n"
+            f"fprintf(f, \"text 0,0 '\");\n"
+            f"fputc('%', f);   // literal percent\n"
+            f"fputc('[', f);\n"
+            f"for (int i = 0; i < N; i++) fputc('A', f);  // N >= MaxTextExtent\n"
+            f"fprintf(f, \"]'\\n\");\n"
+            f"fprintf(f, \"pop graphic-context\\n\");\n"
+            f"```\n"
+        )
     # Add final instruction
     prompt += (
         f"\nWrite a PoC C program that, when compiled with -fsanitize=address and executed,\n"
-        f"triggers the crash described above on the vulnerable source.\n"
-        f"Output ONLY the C code inside triple backticks. No explanation."
+        "\n\nCRITICAL OUTPUT CONSTRAINTS:\n"
+        "- Do NOT write the payload as a hex byte array literal (unsigned char poc[] = {0x41, ...}).\n"
+        "  These arrays are too long and will be truncated. You will run out of tokens.\n"
+        "- Instead, write the payload using a loop or fprintf/fputc calls.\n"
+        "- The generator MUST write its output to exactly '/tmp/poc' (no extension).\n"
     )
+    
     
     return prompt
 
@@ -206,7 +239,7 @@ def build_feedback_prompt(
         hallucinated_symbols = []
     
     # Extract fields
-    cve_id = cve_entry["id"]
+    cve_id = cve_entry.get("id") or cve_entry.get("cve_id", "unknown")
     crash_description = cve_entry["crash_description"]
     
     # Build the prompt
@@ -230,10 +263,20 @@ def build_feedback_prompt(
             f"Only use functions, variables, and headers that appear in the provided source code.\n"
         )
         prompt += hallucination_section
-    
+    fuzz_target = cve_entry.get("fuzz_target", "")
+    if fuzz_target and any(fmt in fuzz_target.upper() for fmt in ["MVG", "SVG", "PS", "PDF", "JPEG", "PNG"]):
+        prompt += (
+            f"\nREMINDER: Use fputc('%', f) not fprintf(f, \"%%[\") to write a literal "
+            f"percent sign. The %% escape prevents the vulnerable code path from being reached.\n"
+        )
     # Add final instruction
     prompt += (
         f"\nFix the PoC. Output ONLY the corrected C code inside triple backticks. No explanation."
+        "\n\nCRITICAL OUTPUT CONSTRAINTS:\n"
+        "- Do NOT write the payload as a hex byte array literal (unsigned char poc[] = {0x41, ...}).\n"
+        "  These arrays are too long and will be truncated. You will run out of tokens.\n"
+        "- Instead, write the payload using a loop or fprintf/fputc calls.\n"
+        "- The generator MUST write its output to exactly '/tmp/poc' (no extension).\n"
     )
     
     return prompt

@@ -36,10 +36,10 @@ def _extract_real_asan(stderr: str) -> dict:
         'stack_frames': []
     }
     
-def verify(poc_code: str, cve_entry: dict) -> VerifierResult:
+def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "") -> VerifierResult:
     details = {}
     target_src = cve_entry.get("target_source", "")
-    image_name = cve_entry.get("docker_image") or "cybergym-sandbox:latest"
+    image_name = cve_entry.get("docker_image") or cve_entry.get("docker_image_vul") or "cybergym-sandbox:latest"
 
     # 1. Hallucination check
     hallucinated = detect_hallucinations(target_source_code=target_src, poc_code=poc_code)
@@ -51,7 +51,7 @@ def verify(poc_code: str, cve_entry: dict) -> VerifierResult:
 
     if not compiler_result['success']:
         feedback = build_feedback(compiler_result, hallucinated_symbols=hallucinated, 
-                                  target_source=target_src, image_name=image_name, poc_code=poc_code) # <--- ADDED HERE
+                                  target_source=target_src, image_name=image_name, poc_code=poc_code, cve_entry=cve_entry) # <--- ADDED HERE
         if any(error.get('type') == 'infrastructure_error' for error in compiler_result.get('errors', [])):
             return VerifierResult('infra_fail', feedback, details)
         return VerifierResult('compile_fail', feedback, details)
@@ -62,7 +62,7 @@ def verify(poc_code: str, cve_entry: dict) -> VerifierResult:
 
     if not exec_result['triggered']:
         base_feedback = build_feedback(compiler_result, execution_result=exec_result, 
-                                  hallucinated_symbols=hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code) # <--- ADDED HERE
+                                  hallucinated_symbols=hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, previous_feedback=previous_feedback, cve_entry=cve_entry) # <--- ADDED HERE
         
         # --- NEW: SELF-CRITIQUE INJECTION ---
         # Force the LLM to act as its own critic on the next iteration
@@ -90,11 +90,11 @@ def verify(poc_code: str, cve_entry: dict) -> VerifierResult:
     details['sanitizer'] = sanitizer_result
 
     feedback = build_feedback(compiler_result, sanitizer_result, exec_result, 
-                              hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code) # <--- ADDED HERE
+                              hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, cve_entry=cve_entry) # <--- ADDED HERE
     
     return VerifierResult('crash', feedback, details)
 
 class VerifierPipeline:
     def __init__(self): pass
-    def verify(self, poc_code: str, cve_entry: dict) -> VerifierResult:
-        return verify(poc_code=poc_code, cve_entry=cve_entry)
+    def verify(self, poc_code: str, cve_entry: dict, previous_feedback: str = "") -> VerifierResult:
+        return verify(poc_code=poc_code, cve_entry=cve_entry, previous_feedback=previous_feedback)
