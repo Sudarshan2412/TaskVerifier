@@ -10,7 +10,8 @@
     "real_crash": true,
     "crash_log_path": "sample_crash_logs/arvo_10013_crash.txt",
     "poc_bucket": "short",
-    "target_source": "static void\nDisassociateAlphaRegion(Image *image)\n{\n  register PixelPacket\n    *q;\n\n  register long\n    x;\n\n  register double\n    alpha,\n    value;\n\n  long\n    number_pixels;\n\n  number_pixels=(long) GetPixelCacheArea(image);\n  q=AccessMutablePixels(image);\n\n  for (x = number_pixels; x > 0; --x)\n    {\n      if (q->opacity != (Quantum) MaxRGB)\n        {\n          alpha=((double) MaxRGB-q->opacity)/MaxRGB;\n          value=(double) q->red/alpha;\n          q->red=RoundDoubleToQuantum(value);\n          value=(double) q->green/alpha;\n          q->green=RoundDoubleToQuantum(value);\n          value=(double) q->blue/alpha;\n          q->blue=RoundDoubleToQuantum(value);\n        }\n      q++;\n    }\n}"
+    "target_source": "static void\nDisassociateAlphaRegion(Image *image)\n{\n  register PixelPacket\n    *q;\n\n  register long\n    x;\n\n  register double\n    alpha,\n    value;\n\n  long\n    number_pixels;\n\n  number_pixels=(long) GetPixelCacheArea(image);\n  q=AccessMutablePixels(image);\n\n  for (x = number_pixels; x > 0; --x)\n    {\n      if (q->opacity != (Quantum) MaxRGB)\n        {\n          alpha=((double) MaxRGB-q->opacity)/MaxRGB;\n          value=(double) q->red/alpha;\n          q->red=RoundDoubleToQuantum(value);\n          value=(double) q->green/alpha;\n          q->green=RoundDoubleToQuantum(value);\n          value=(double) q->blue/alpha;\n          q->blue=RoundDoubleToQuantum(value);\n        }\n      q++;\n    }\n}",
+    "fuzz_target": "/out/coder_TIFF_fuzzer"
   },
   {
     "cve_id": "arvo:10055",
@@ -38,7 +39,8 @@
     "real_crash": true,
     "crash_log_path": "sample_crash_logs/arvo_10096_crash.txt",
     "poc_bucket": "short",
-    "target_source": "static PathInfo *ConvertPrimitiveToPath(const DrawInfo *draw_info,\n  const PrimitiveInfo *primitive_info)\n{\n  PathInfo\n    *path_info;\n\n  long\n    coordinates,\n    n,\n    start;\n\n  MagickBool\n    IsClosedSubPath;\n\n  PathInfoCode\n    code;\n\n  PointInfo\n    p,\n    q;\n\n  register long\n    i;\n\n  switch (primitive_info->primitive)\n  {\n    case PointPrimitive:\n    case ColorPrimitive:\n    case MattePrimitive:\n    case TextPrimitive:\n    case ImagePrimitive:\n      return((PathInfo *) NULL);\n    default:\n      break;\n  }\n  for (i=0; primitive_info[i].primitive != UndefinedPrimitive; i++);\n  path_info=MagickAllocateArray(PathInfo *,(2*i+3),sizeof(PathInfo));\n  if (path_info == (PathInfo *) NULL)\n    return((PathInfo *) NULL);\n  coordinates=0;\n  n=0;\n  p.x=(-1.0);\n  p.y=(-1.0);\n  q.x=(-1.0);\n  q.y=(-1.0);\n  start=0;\n  for (i=0; primitive_info[i].primitive != UndefinedPrimitive; i++)\n  {\n    code=LineToCode;\n    if (coordinates <= 0)\n      {\n        coordinates=(long) primitive_info[i].coordinates;\n        p=primitive_info[i].point;\n        start=n;\n        code=MoveToCode;\n        IsClosedSubPath=PRIMINF_GET_IS_CLOSED_SUBPATH(&primitive_info[i]);\n      }\n    coordinates--;\n    if ((code == MoveToCode) || (coordinates <= 0) ||\n        (fabs(q.x-primitive_info[i].point.x) > MagickEpsilon) ||\n        (fabs(q.y-primitive_info[i].point.y) > MagickEpsilon))\n      {\n        path_info[n].code=code;\n        path_info[n].point=primitive_info[i].point;\n        q=primitive_info[i].point;\n        n++;\n      }\n  }\n  path_info[n].code=EndCode;\n  path_info[n].point.x=0.0;\n  path_info[n].point.y=0.0;\n  return(path_info);\n}"
+    "target_source": "static PathInfo *ConvertPrimitiveToPath(const DrawInfo *draw_info,\n  const PrimitiveInfo *primitive_info)\n{\n  PathInfo\n    *path_info;\n\n  long\n    coordinates,\n    n,\n    start;\n\n  MagickBool\n    IsClosedSubPath;\n\n  PathInfoCode\n    code;\n\n  PointInfo\n    p,\n    q;\n\n  register long\n    i;\n\n  switch (primitive_info->primitive)\n  {\n    case PointPrimitive:\n    case ColorPrimitive:\n    case MattePrimitive:\n    case TextPrimitive:\n    case ImagePrimitive:\n      return((PathInfo *) NULL);\n    default:\n      break;\n  }\n  for (i=0; primitive_info[i].primitive != UndefinedPrimitive; i++);\n  path_info=MagickAllocateArray(PathInfo *,(2*i+3),sizeof(PathInfo));\n  if (path_info == (PathInfo *) NULL)\n    return((PathInfo *) NULL);\n  coordinates=0;\n  n=0;\n  p.x=(-1.0);\n  p.y=(-1.0);\n  q.x=(-1.0);\n  q.y=(-1.0);\n  start=0;\n  for (i=0; primitive_info[i].primitive != UndefinedPrimitive; i++)\n  {\n    code=LineToCode;\n    if (coordinates <= 0)\n      {\n        coordinates=(long) primitive_info[i].coordinates;\n        p=primitive_info[i].point;\n        start=n;\n        code=MoveToCode;\n        IsClosedSubPath=PRIMINF_GET_IS_CLOSED_SUBPATH(&primitive_info[i]);\n      }\n    coordinates--;\n    if ((code == MoveToCode) || (coordinates <= 0) ||\n        (fabs(q.x-primitive_info[i].point.x) > MagickEpsilon) ||\n        (fabs(q.y-primitive_info[i].point.y) > MagickEpsilon))\n      {\n        path_info[n].code=code;\n        path_info[n].point=primitive_info[i].point;\n        q=primitive_info[i].point;\n        n++;\n      }\n  }\n  path_info[n].code=EndCode;\n  path_info[n].point.x=0.0;\n  path_info[n].point.y=0.0;\n  return(path_info);\n}",
+    "fuzz_target": "/out/coder_MVG_fuzzer"
   },
   {
     "cve_id": "arvo:10147",
@@ -51,7 +53,8 @@
     "real_crash": false,
     "crash_log_path": "sample_crash_logs/arvo_10147_crash.txt",
     "poc_bucket": "short",
-    "target_source": "static MagickPassFail IsDCM(const unsigned char *magick,const size_t length)\n{\n  if (length < 132)\n    return(False);\n  if (LocaleNCompare((char *) (magick+128),\"DICM\",4) == 0)\n    return(True);\n  return(False);\n}\n\nstatic MagickPassFail DCM_InitDCM(DicomStream *dcm,int verbose)\n{\n  (void) memset(dcm,0,sizeof(*dcm));\n  dcm->columns=0;\n  dcm->rows=0;\n  dcm->samples_per_pixel=1;\n  dcm->bits_allocated=8;\n  dcm->significant_bits=0;\n  dcm->high_bit=0;\n  dcm->bytes_per_pixel=1;\n  dcm->max_value_in=255;\n  dcm->max_value_out=255;\n  dcm->pixel_representation=0;\n  dcm->transfer_syntax=DCM_TS_IMPL_LITTLE;\n  dcm->interlace=0;\n  dcm->msb_state=DCM_MSB_LITTLE;\n  dcm->phot_interp=DCM_PI_MONOCHROME2;\n  dcm->window_center=0;\n  dcm->window_width=0;\n  dcm->rescale_intercept=0;\n  dcm->rescale_slope=1;\n  dcm->number_scenes=1;\n  dcm->data=NULL;\n  dcm->funcReadShort=ReadBlobLSBShort;\n  dcm->funcReadLong=ReadBlobLSBLong;\n  dcm->explicit_file=False;\n  dcm->verbose=verbose;\n  return MagickPass;\n}"
+    "target_source": "static MagickPassFail IsDCM(const unsigned char *magick,const size_t length)\n{\n  if (length < 132)\n    return(False);\n  if (LocaleNCompare((char *) (magick+128),\"DICM\",4) == 0)\n    return(True);\n  return(False);\n}\n\nstatic MagickPassFail DCM_InitDCM(DicomStream *dcm,int verbose)\n{\n  (void) memset(dcm,0,sizeof(*dcm));\n  dcm->columns=0;\n  dcm->rows=0;\n  dcm->samples_per_pixel=1;\n  dcm->bits_allocated=8;\n  dcm->significant_bits=0;\n  dcm->high_bit=0;\n  dcm->bytes_per_pixel=1;\n  dcm->max_value_in=255;\n  dcm->max_value_out=255;\n  dcm->pixel_representation=0;\n  dcm->transfer_syntax=DCM_TS_IMPL_LITTLE;\n  dcm->interlace=0;\n  dcm->msb_state=DCM_MSB_LITTLE;\n  dcm->phot_interp=DCM_PI_MONOCHROME2;\n  dcm->window_center=0;\n  dcm->window_width=0;\n  dcm->rescale_intercept=0;\n  dcm->rescale_slope=1;\n  dcm->number_scenes=1;\n  dcm->data=NULL;\n  dcm->funcReadShort=ReadBlobLSBShort;\n  dcm->funcReadLong=ReadBlobLSBLong;\n  dcm->explicit_file=False;\n  dcm->verbose=verbose;\n  return MagickPass;\n}",
+    "fuzz_target": "/out/coder_DCM_fuzzer"
   },
   {
     "cve_id": "arvo:10252",
@@ -64,7 +67,8 @@
     "real_crash": true,
     "crash_log_path": "sample_crash_logs/arvo_10252_crash.txt",
     "poc_bucket": "medium",
-    "target_source": "static void enqueue_lr_jobs(AV1LrSync *lr_sync, AV1LrStruct *lr_ctxt,\n                            AV1_COMMON *cm) {\n  FilterFrameCtxt *ctxt = lr_ctxt->ctxt;\n\n  const int num_planes = av1_num_planes(cm);\n  AV1LrMTInfo *lr_job_queue = lr_sync->job_queue;\n  int32_t lr_job_counter[2], num_even_lr_jobs = 0;\n  lr_sync->jobs_enqueued = 0;\n  lr_sync->jobs_dequeued = 0;\n\n  for (int plane = 0; plane < num_planes; plane++) {\n    if (cm->rst_info[plane].frame_restoration_type == RESTORE_NONE) continue;\n    num_even_lr_jobs =\n        num_even_lr_jobs + ((ctxt[plane].rsi->vert_units_per_tile + 1) >> 1);\n  }\n  lr_job_counter[0] = 0;\n  lr_job_counter[1] = num_even_lr_jobs;\n\n  for (int plane = 0; plane < num_planes; plane++) {\n    if (cm->rst_info[plane].frame_restoration_type == RESTORE_NONE) continue;\n    const int is_uv = plane > 0;\n    const int ss_y = is_uv && cm->seq_params.subsampling_y;\n    AV1PixelRect tile_rect = ctxt[plane].tile_rect;\n    const int unit_size = ctxt[plane].rsi->restoration_unit_size;\n    const int tile_h = tile_rect.bottom - tile_rect.top;\n    const int ext_size = unit_size * 3 / 2;\n    int y0 = 0, i = 0;\n    while (y0 < tile_h) {\n      int remaining_h = tile_h - y0;\n      int h = (remaining_h < ext_size) ? remaining_h : unit_size;\n      RestorationTileLimits limits;\n      limits.v_start = tile_rect.top + y0;\n      limits.v_end = tile_rect.top + y0 + h;\n      lr_job_queue[lr_job_counter[i & 1]].lr_unit_row = i;\n      lr_job_queue[lr_job_counter[i & 1]].plane = plane;\n      lr_job_queue[lr_job_counter[i & 1]].v_start = limits.v_start;\n      lr_job_queue[lr_job_counter[i & 1]].v_end = limits.v_end;\n      lr_job_counter[i & 1]++;\n      lr_sync->jobs_enqueued++;\n      y0 += h;\n      i++;\n    }\n  }\n}"
+    "target_source": "static void enqueue_lr_jobs(AV1LrSync *lr_sync, AV1LrStruct *lr_ctxt,\n                            AV1_COMMON *cm) {\n  FilterFrameCtxt *ctxt = lr_ctxt->ctxt;\n\n  const int num_planes = av1_num_planes(cm);\n  AV1LrMTInfo *lr_job_queue = lr_sync->job_queue;\n  int32_t lr_job_counter[2], num_even_lr_jobs = 0;\n  lr_sync->jobs_enqueued = 0;\n  lr_sync->jobs_dequeued = 0;\n\n  for (int plane = 0; plane < num_planes; plane++) {\n    if (cm->rst_info[plane].frame_restoration_type == RESTORE_NONE) continue;\n    num_even_lr_jobs =\n        num_even_lr_jobs + ((ctxt[plane].rsi->vert_units_per_tile + 1) >> 1);\n  }\n  lr_job_counter[0] = 0;\n  lr_job_counter[1] = num_even_lr_jobs;\n\n  for (int plane = 0; plane < num_planes; plane++) {\n    if (cm->rst_info[plane].frame_restoration_type == RESTORE_NONE) continue;\n    const int is_uv = plane > 0;\n    const int ss_y = is_uv && cm->seq_params.subsampling_y;\n    AV1PixelRect tile_rect = ctxt[plane].tile_rect;\n    const int unit_size = ctxt[plane].rsi->restoration_unit_size;\n    const int tile_h = tile_rect.bottom - tile_rect.top;\n    const int ext_size = unit_size * 3 / 2;\n    int y0 = 0, i = 0;\n    while (y0 < tile_h) {\n      int remaining_h = tile_h - y0;\n      int h = (remaining_h < ext_size) ? remaining_h : unit_size;\n      RestorationTileLimits limits;\n      limits.v_start = tile_rect.top + y0;\n      limits.v_end = tile_rect.top + y0 + h;\n      lr_job_queue[lr_job_counter[i & 1]].lr_unit_row = i;\n      lr_job_queue[lr_job_counter[i & 1]].plane = plane;\n      lr_job_queue[lr_job_counter[i & 1]].v_start = limits.v_start;\n      lr_job_queue[lr_job_counter[i & 1]].v_end = limits.v_end;\n      lr_job_counter[i & 1]++;\n      lr_sync->jobs_enqueued++;\n      y0 += h;\n      i++;\n    }\n  }\n}",
+    "fuzz_target": "/out/av1_dec_fuzzer_threaded"
   },
   {
     "cve_id": "oss-fuzz:368076871",
@@ -77,7 +81,8 @@
     "real_crash": true,
     "crash_log_path": "crash_logs/oss-fuzz_368076871.txt",
     "target_source": "  if (cmp == 0) {\n    mpz_set_int(mrb, qq, 1);\n    zero(rr);\n    return;\n  }\n  else if (cmp < 0) {\n    zero(qq);\n    mpz_set(mrb, rr, xx);\n    return;\n  }\n\n  mpz_t q, x, y;\n\n  mrb_assert(yy->sn != 0);      /* divided by zero */\n  mpz_init(mrb, &q);\n  mpz_init(mrb, &x);\n  mpz_init(mrb, &y);\n  mpz_realloc(mrb, &x, xx->sz+1);\n  size_t yd = digits(yy);\n  size_t ns = lzb(yy->p[yd-1]);\n  ulshift(mrb, &x, xx, ns);\n  ulshift(mrb, &y, yy, ns);\n  size_t xd = digits(&x);\n  mpz_realloc(mrb, &q, xd);\n  mp_dbl_limb z = y.p[yd-1];\n  if (xd>=yd) {\n    for (size_t j=xd-yd;; j--) {\n      mp_dbl_limb_signed b=0;\n      mp_dbl_limb qhat;\n\n      if (j+yd == xd)\n        qhat = x.p[j+yd-1] / z;\n      else\n        qhat = (((mp_dbl_limb)x.p[j+yd] << DIG_SIZE) + x.p[j+yd-1]) / z;\n      if (qhat) {\n        size_t i;\n\n        for (i=0; i<yd; i++) {\n          mp_dbl_limb zz = qhat * y.p[i];\n          mp_dbl_limb_signed u = LOW(b)+x.p[i+j]-LOW(zz);\n          x.p[i+j] = LOW(u);",
-    "poc_bucket": "long"
+    "poc_bucket": "long",
+    "fuzz_target": "/out/mruby_fuzzer"
   },
   {
     "cve_id": "oss-fuzz:368076875",
@@ -90,7 +95,8 @@
     "real_crash": true,
     "crash_log_path": "crash_logs/oss-fuzz_368076875.txt",
     "target_source": "static inline void\ndictkeys_decref(PyInterpreterState *interp, PyDictKeysObject *dk, bool use_qsbr)\n{\n    if (FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_refcnt) == _Py_IMMORTAL_REFCNT) {\n        return;\n    }\n    assert(FT_ATOMIC_LOAD_SSIZE(dk->dk_refcnt) > 0);\n#ifdef Py_REF_DEBUG\n    _Py_DecRefTotal(_PyThreadState_GET());\n#endif\n    if (DECREF_KEYS(dk) == 1) {\n        if (DK_IS_UNICODE(dk)) {\n            PyDictUnicodeEntry *entries = DK_UNICODE_ENTRIES(dk);\n            Py_ssize_t i, n;\n            for (i = 0, n = dk->dk_nentries; i < n; i++) {\n                Py_XDECREF(entries[i].me_key);\n                Py_XDECREF(entries[i].me_value);\n            }\n        }\n        else {\n            PyDictKeyEntry *entries = DK_ENTRIES(dk);\n            Py_ssize_t i, n;\n            for (i = 0, n = dk->dk_nentries; i < n; i++) {\n                Py_XDECREF(entries[i].me_key);\n                Py_XDECREF(entries[i].me_value);\n            }\n        }\n        free_keys_object(dk, use_qsbr);\n    }",
-    "poc_bucket": "long"
+    "poc_bucket": "long",
+    "fuzz_target": "/out/fuzz_ast_literal_eval"
   },
   {
     "cve_id": "oss-fuzz:370689421",
@@ -103,7 +109,8 @@
     "real_crash": true,
     "crash_log_path": "crash_logs/oss-fuzz_370689421.txt",
     "target_source": "  int eval(std::string expression, ::uint64_t n)\n  {\n    try {\n      return Wt::WMessageResources::evalPluralCase(expression, n);\n    } catch (Wt::WInvalidFormatException& ife) {\n    } catch (Wt::WInvalidOperationException& ioe) {\n    }\n  }\n}\n\nextern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size) {\n\n    if (Size < kMinInputLength || Size > kMaxInputLength) {\n        return 1;\n    }\n\n    std::string input(Data, Data + Size);\n    eval(input, 0);\n\n    return 0;\n}",
-    "poc_bucket": "short"
+    "poc_bucket": "short",
+    "fuzz_target": "/out/fuzz-eval"
   },
   {
     "cve_id": "oss-fuzz:370775021",
@@ -116,7 +123,8 @@
     "real_crash": false,
     "crash_log_path": "crash_logs/oss-fuzz_370775021.txt",
     "target_source": "static void\nmark_context_stack(mrb_state *mrb, struct mrb_context *c)\n{\n  size_t i, e;\n  mrb_value nil;\n\n  if (c->stbase == NULL) return;\n  if (c->ci) {\n    e = (c->ci->stack ? c->ci->stack - c->stbase : 0);\n    e += mrb_ci_nregs(c->ci);\n  }\n  else {\n    e = 0;\n  }\n  if (c->stbase + e > c->stend) e = c->stend - c->stbase;\n  for (i=0; i<e; i++) {\n    mrb_value v = c->stbase[i];\n\n    if (!mrb_immediate_p(v)) {\n      mrb_gc_mark(mrb, mrb_basic_ptr(v));\n    }\n  }\n  e = c->stend - c->stbase;\n  nil = mrb_nil_value();\n  for (; i<e; i++) {\n    c->stbase[i] = nil;\n  }\n}",
-    "poc_bucket": "medium"
+    "poc_bucket": "medium",
+    "fuzz_target": "/out/mruby_fuzzer"
   },
   {
     "cve_id": "oss-fuzz:371445205",
@@ -129,6 +137,21 @@
     "real_crash": true,
     "crash_log_path": "crash_logs/oss-fuzz_371445205.txt",
     "target_source": "static void attr_free(zval *v)\n{\n        zend_attribute *attr = Z_PTR_P(v);\n        bool persistent = attr->flags & ZEND_ATTRIBUTE_PERSISTENT;\n\n        zend_string_release(attr->name);\n        zend_string_release(attr->lcname);\n\n        for (uint32_t i = 0; i < attr->argc; i++) {\n                if (attr->args[i].name) {\n                        zend_string_release(attr->args[i].name);\n                }\n                if (persistent) {\n                        zval_internal_ptr_dtor(&attr->args[i].value);\n                } else {\n                        zval_ptr_dtor(&attr->args[i].value);\n                }\n        }\n\n        pefree(attr, persistent);\n}",
-    "poc_bucket": "long"
+    "poc_bucket": "long",
+    "fuzz_target": "/out/php-fuzz-execute"
+  },
+  {
+    "cve_id": "arvo:1065",
+    "docker_image_vul": "n132/arvo:1065-vul",
+    "docker_image_fix": "n132/arvo:1065-fix",
+    "crash_description": "==N==WARNING: MemorySanitizer: use-of-uninitialized-value\n    #0 in file_regexec /src/file/src/funcs.c:511\n    #1 in match /src/file/src/softmagic.c\nSUMMARY: MemorySanitizer: use-of-uninitialized-value /src/file/src/funcs.c:511 in file_regexec",
+    "sanitizer_type": "msan",
+    "vuln_class": "uninitialized_value",
+    "exit_code_vul": 1,
+    "real_crash": true,
+    "crash_log_path": "sample_crash_logs/arvo_1065_crash.txt",
+    "poc_bucket": "short",
+    "fuzz_target": "/out/magic_fuzzer",
+    "target_source": "protected int\nfile_regexec(file_regex_t *rx, const char *str, size_t nmatch,\n    regmatch_t* pmatch, int eflags)\n{\n        assert(rx->rc == 0);\n        return regexec(&rx->rx, str, nmatch, pmatch, eflags);\n}"
   }
 ]

@@ -23,8 +23,8 @@ from typing import Any
 class StepLogger:
     """Prints formatted, step-by-step console output during agent execution.
 
-    Each pipeline stage (prompt, LLM, extraction, hallucination, verifier)
-    gets a numbered line with emoji, status, and optional timing/detail info.
+    Each pipeline stage (prompt, LLM, extraction, hallucination, verifier,
+    critic tool loop) gets a numbered line with emoji, status, and timing.
     """
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -33,30 +33,29 @@ class StepLogger:
     def _safe_print(text: str) -> None:
         """Print with fallback for terminals that can't render Unicode."""
         try:
-            print(text)
+            print(text, flush=True)
         except UnicodeEncodeError:
-            # Replace box-drawing and emoji with ASCII equivalents
             ascii_map = str.maketrans({
                 "╔": "+", "╗": "+", "╚": "+", "╝": "+",
                 "═": "=", "║": "|", "│": "|",
                 "├": "|", "└": "`", "─": "-",
-                "📝": "[P]", "🤖": "[L]", "🔍": "[E]",
-                "🧬": "[H]", "🔨": "[V]", "✓": "[/]",
-                "✗": "[X]", "✅": "[OK]", "❌": "[FAIL]",
-                "⚠": "[!]", "💥": "[!!]", "⏳": "[..]",
-                "🎯": "[>>]", "📄": "[F]",
-                "≠": "!=",
+                "📝": "[P]",  "🤖": "[L]",  "🔍": "[E]",
+                "🧬": "[H]",  "🔨": "[V]",  "✓": "[/]",
+                "✗": "[X]",   "✅": "[OK]", "❌": "[FAIL]",
+                "⚠": "[!]",   "💥": "[!!]", "⏳": "[..]",
+                "🎯": "[>>]", "📄": "[F]",  "🐳": "[D]",
+                "🧠": "[C]",  "📨": "[FB]", "≠": "!=",
             })
-            print(text.translate(ascii_map))
+            print(text.translate(ascii_map), flush=True)
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # ── Run / CVE level banners ───────────────────────────────────────────────
 
     def log_run_header(self, total_cves: int, max_attempts: int) -> None:
         """Print a banner at the very start of a test run."""
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._safe_print("")
         self._safe_print("╔══════════════════════════════════════════════════════════════════╗")
-        self._safe_print(f"║  TaskVerifier — Week 8 Manual Run                               ║")
+        self._safe_print(f"║  TaskVerifier Run                                               ║")
         self._safe_print(f"║  {ts}  │  CVEs: {total_cves}  │  Max attempts: {max_attempts:<4}       ║")
         self._safe_print("╚══════════════════════════════════════════════════════════════════╝")
         self._safe_print("")
@@ -82,7 +81,7 @@ class StepLogger:
         """Print a divider for a new attempt."""
         self._safe_print(f"  ── Attempt {attempt}/{max_attempts} " + "─" * 50)
 
-    # -- Individual pipeline steps ------------------------------------------
+    # ── Pipeline steps 1–5 ───────────────────────────────────────────────────
 
     def log_prompt_built(self, prompt_type: str, char_count: int) -> None:
         self._safe_print(f"  [1/5] 📝 Prompt built           ({prompt_type}, {char_count:,} chars)")
@@ -112,20 +111,20 @@ class StepLogger:
         compile_error: str = "",
         exec_message: str = "",
     ) -> None:
-        """Print a tree-style verifier breakdown."""
+        """Print a tree-style verifier breakdown (compile → exec → crash)."""
         self._safe_print(f"  [5/5] 🔨 Verifier pipeline")
 
         if compile_ok:
             self._safe_print(f"        ├─ Compile:   ✓")
         else:
-            err_short = compile_error[:80].replace("\n", " ") if compile_error else "see log"
+            err_short = compile_error[:120].replace("\n", " ") if compile_error else "see log"
             self._safe_print(f"        └─ Compile:   ✗  {err_short}")
-            return  # no point showing exec/crash if compile failed
+            return
 
         if exec_ok is True:
             self._safe_print(f"        ├─ Execute:   ✓  exit_code ≠ 0")
         elif exec_ok is False:
-            msg_short = exec_message[:80].replace("\n", " ") if exec_message else "no crash"
+            msg_short = exec_message[:120].replace("\n", " ") if exec_message else "no crash"
             self._safe_print(f"        └─ Execute:   ✗  {msg_short}")
             return
         else:
@@ -133,9 +132,72 @@ class StepLogger:
             return
 
         if crash_type:
-            self._safe_print(f"        └─ Crash:     ✓  {crash_type[:80]}")
+            self._safe_print(f"        └─ Crash:     ✓  {crash_type[:100]}")
         else:
             self._safe_print(f"        └─ Crash:     ✗  no sanitizer error detected")
+
+    # ── NEW: Docker execution detail ──────────────────────────────────────────
+
+    def log_poc_written(self, path: str, size_bytes: int) -> None:
+        """Log that the PoC generator wrote a file to disk."""
+        self._safe_print(f"        ├─ 📄 PoC written:       {path}  ({size_bytes:,} bytes)")
+
+    def log_docker_exec(self, image: str, fuzz_target: str, exit_code: int) -> None:
+        """Log the Docker run result for the vulnerable target."""
+        status = "✓ crash" if exit_code != 0 else "✗ no crash"
+        short_target = fuzz_target.split("/")[-1] if fuzz_target else "unknown"
+        self._safe_print(
+            f"        ├─ 🐳 Docker exec:       {image}  "
+            f"{short_target}  → exit {exit_code}  [{status}]"
+        )
+
+    def log_fuzzer_output(self, stdout: str, stderr: str) -> None:
+        """Log the first meaningful lines of fuzzer stdout/stderr."""
+        combined = (stderr or stdout or "").strip()
+        if not combined:
+            self._safe_print(f"        │  Fuzzer output:      (empty)")
+            return
+        lines = [l for l in combined.splitlines() if l.strip()][:3]
+        for i, line in enumerate(lines):
+            prefix = "        │  " if i < len(lines) - 1 else "        └─ "
+            self._safe_print(f"{prefix}Fuzzer: {line[:120]}")
+
+    # ── NEW: Critic LLM tool loop ─────────────────────────────────────────────
+
+    def log_critic_start(self, reason: str) -> None:
+        """Log that the Critic LLM has been invoked and why."""
+        self._safe_print(f"")
+        self._safe_print(f"        🧠 Critic LLM invoked  ({reason})")
+
+    def log_critic_turn(self, turn: int, max_turns: int, action: str) -> None:
+        """Log a single ReAct turn inside the critic loop."""
+        self._safe_print(f"        ├─ Turn {turn}/{max_turns}:  {action[:100]}")
+
+    def log_docker_tool_call(self, tool_type: str, arg: str, result_len: int) -> None:
+        """Log a SEARCH or READ tool call made by the critic."""
+        arg_short = arg[:70]
+        self._safe_print(
+            f"        │   🐳 {tool_type:<7} {arg_short!r}  → {result_len:,} chars"
+        )
+
+    def log_critic_result(self, conclusion: str) -> None:
+        """Log the critic's final conclusion (first line only)."""
+        first_line = conclusion.strip().splitlines()[0] if conclusion.strip() else "(empty)"
+        self._safe_print(f"        └─ Critic conclusion: {first_line[:120]}")
+
+    # ── NEW: Feedback ─────────────────────────────────────────────────────────
+
+    def log_feedback_sent(self, feedback_preview: str, char_count: int) -> None:
+        """Log the feedback being handed back to the agent for the next attempt."""
+        self._safe_print(f"")
+        self._safe_print(f"  [FB]  📨 Feedback to LLM       ({char_count:,} chars)")
+        first = next(
+            (l.strip() for l in feedback_preview.splitlines() if l.strip()), ""
+        )
+        if first:
+            self._safe_print(f"        └─ {first[:120]}{'...' if len(first) > 120 else ''}")
+
+    # ── Outcome / errors ──────────────────────────────────────────────────────
 
     def log_outcome(self, success: bool, attempt: int, failure_reason: str = "") -> None:
         if success:
@@ -159,7 +221,6 @@ class NullStepLogger(StepLogger):
     """Drop-in replacement that silently discards all log calls."""
 
     def __getattribute__(self, name: str) -> Any:
-        # All public log_* methods become no-ops
         if name.startswith("log_"):
             return lambda *a, **kw: None
         return super().__getattribute__(name)
@@ -212,7 +273,7 @@ class ReportWriter:
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = out / f"week8_report_{ts}.md"
+        path = out / f"report_{ts}.md"
 
         lines: list[str] = []
         self._write_header(lines)
@@ -230,10 +291,10 @@ class ReportWriter:
         ts = self.run_start.strftime("%Y-%m-%d %H:%M:%S UTC")
         passed = sum(1 for r in self.cve_reports if r["success"])
         total = len(self.cve_reports)
-        lines.append("# Week 8 Manual Test Report")
+        lines.append("# TaskVerifier Run Report")
         lines.append("")
-        lines.append(f"| Field | Value |")
-        lines.append(f"|-------|-------|")
+        lines.append("| Field | Value |")
+        lines.append("|-------|-------|")
         lines.append(f"| **Run time** | {ts} |")
         lines.append(f"| **CVEs tested** | {total} |")
         lines.append(f"| **Max attempts** | {self.max_attempts} |")
@@ -259,21 +320,18 @@ class ReportWriter:
 
     def _write_failure_analysis(self, lines: list[str]) -> None:
         failures = [r for r in self.cve_reports if not r["success"]]
+        lines.append("## Failure Analysis")
+        lines.append("")
         if not failures:
-            lines.append("## Failure Analysis")
-            lines.append("")
             lines.append("🎉 All CVEs passed! No failures to analyze.")
             lines.append("")
             return
 
-        # Group by failure mode
         by_mode: dict[str, list[str]] = {}
         for r in failures:
             mode = self._classify_failure(r)
             by_mode.setdefault(mode, []).append(r["cve_id"])
 
-        lines.append("## Failure Analysis")
-        lines.append("")
         for mode, cves in by_mode.items():
             lines.append(f"- **{mode}** ({len(cves)}): {', '.join(cves)}")
         lines.append("")
@@ -292,67 +350,91 @@ class ReportWriter:
             lines.append(f"- **Vuln class**: {r['vuln_class']}")
             lines.append(f"- **Result**: {'PASS' if r['success'] else 'FAIL'}")
             lines.append(f"- **Attempts used**: {r['attempts']}")
-
             if r["error"]:
                 lines.append(f"- **Error**: `{r['error']}`")
             if r["failure_reason"]:
                 lines.append(f"- **Failure reason**: `{r['failure_reason']}`")
             lines.append("")
 
-            # Per-attempt details
             for entry in r["transcript"]:
                 if not isinstance(entry, dict):
                     continue
                 attempt_num = entry.get("attempt", "?")
-                lines.append(f"<details>")
-                lines.append(f"<summary><strong>Attempt {attempt_num}</strong> — "
-                             f"Verifier: <code>{entry.get('verifier_status', '?')}</code></summary>")
+                v_status = entry.get("verifier_status", "?")
+                v_stage = entry.get("verifier_stage", "")
+
+                lines.append("<details>")
+                lines.append(
+                    f"<summary><strong>Attempt {attempt_num}</strong>"
+                    f" — Verifier: <code>{v_status}</code>"
+                    + (f" @ <code>{v_stage}</code>" if v_stage else "")
+                    + "</summary>"
+                )
                 lines.append("")
 
-                # Prompt summary
+                # ── Prompt ────────────────────────────────────────────────────
                 prompt = entry.get("prompt", "")
                 if prompt:
-                    prompt_preview = prompt[:200].replace("\n", " ").strip()
-                    lines.append(f"**Prompt** ({len(prompt):,} chars): `{prompt_preview}...`")
+                    preview = prompt[:300].replace("\n", " ").strip()
+                    lines.append(f"**Prompt** ({len(prompt):,} chars):")
+                    lines.append(f"> {preview}{'...' if len(prompt) > 300 else ''}")
                     lines.append("")
 
-                # LLM response summary
+                # ── LLM response ──────────────────────────────────────────────
                 raw = entry.get("raw_response", "")
                 if raw:
-                    raw_preview = raw[:300].replace("\n", " ").strip()
-                    lines.append(f"**LLM Response** ({len(raw):,} chars): `{raw_preview}...`")
+                    preview = raw[:400].replace("\n", " ").strip()
+                    lines.append(f"**LLM Response** ({len(raw):,} chars):")
+                    lines.append(f"> {preview}{'...' if len(raw) > 400 else ''}")
                     lines.append("")
 
-                # Extracted PoC
+                # ── Extracted PoC ─────────────────────────────────────────────
                 poc = entry.get("extracted_poc", "")
                 if poc:
                     lines.append("**Extracted PoC:**")
                     lines.append("```c")
                     lines.append(poc)
                     lines.append("```")
-                    lines.append("")
                 else:
                     lines.append("**Extracted PoC:** _(extraction failed)_")
-                    lines.append("")
+                lines.append("")
 
-                # Hallucinated symbols
+                # ── Hallucinations ────────────────────────────────────────────
                 halluc = entry.get("hallucinated_symbols", [])
                 if halluc:
                     lines.append(f"**Hallucinated symbols:** `{', '.join(halluc)}`")
                 else:
-                    lines.append("**Hallucinated symbols:** None")
+                    lines.append("**Hallucinated symbols:** none")
                 lines.append("")
 
-                # Verifier
-                lines.append(f"**Verifier status:** `{entry.get('verifier_status', '?')}`")
-                stage = entry.get("verifier_stage", "")
-                if stage:
-                    lines.append(f"**Verifier stage:** `{stage}`")
+                # ── Verifier result ───────────────────────────────────────────
+                lines.append(f"**Verifier status:** `{v_status}`")
+                if v_stage:
+                    lines.append(f"**Verifier stage:** `{v_stage}`")
+                lines.append("")
 
+                # ── NEW: Fuzzer output ────────────────────────────────────────
+                fuzzer_out = entry.get("fuzzer_output", "")
+                if fuzzer_out:
+                    lines.append("**Fuzzer output:**")
+                    lines.append("```")
+                    lines.append(fuzzer_out[:800])
+                    lines.append("```")
+                    lines.append("")
+
+                # ── NEW: Docker command ───────────────────────────────────────
+                fuzzer_cmd = entry.get("fuzzer_cmd", "")
+                if fuzzer_cmd:
+                    lines.append(f"**Docker command:** `{fuzzer_cmd}`")
+                    lines.append("")
+
+                # ── Feedback sent to next attempt ─────────────────────────────
                 feedback = entry.get("verifier_feedback", "")
                 if feedback:
-                    fb_preview = feedback[:400].replace("\n", " ").strip()
-                    lines.append(f"**Feedback:** `{fb_preview}`")
+                    lines.append("**Feedback to next attempt:**")
+                    lines.append("```")
+                    lines.append(feedback[:800])
+                    lines.append("```")
                 lines.append("")
                 lines.append("</details>")
                 lines.append("")
@@ -363,10 +445,12 @@ class ReportWriter:
     def _write_footer(self, lines: list[str]) -> None:
         passed = sum(1 for r in self.cve_reports if r["success"])
         total = len(self.cve_reports)
-        lines.append(f"*Generated by TaskVerifier logger.py — "
-                      f"{passed}/{total} passed*")
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lines.append(
+            f"*Generated by TaskVerifier logger.py at {ts} — {passed}/{total} passed*"
+        )
 
-    # ── Utility ──────────────────────────────────────────────────────────────
+    # ── Utility ───────────────────────────────────────────────────────────────
 
     @staticmethod
     def _has_hallucinations(r: dict) -> bool:
