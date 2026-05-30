@@ -2,8 +2,12 @@ import os
 import re
 
 
-# Standard C library names — we don't flag these even if not in target source
+# Standard C library names and keywords — we don't flag these even if not in target source
 STDLIB_NAMES = {
+    # C keywords that the symbol regex matches as "function calls"
+    'if', 'for', 'while', 'do', 'switch', 'return', 'sizeof', 'typeof',
+    'else', 'case', 'break', 'continue', 'goto', 'default',
+    # Standard library functions
     'main', 'printf', 'malloc', 'free', 'memcpy', 'memset',
     'strlen', 'strcmp', 'strcpy', 'fopen', 'fclose', 'fprintf',
     'exit', 'abort', 'puts', 'sprintf', 'snprintf', 'atoi',

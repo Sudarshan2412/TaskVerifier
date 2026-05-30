@@ -109,6 +109,9 @@ def _extract_heuristic(text: str) -> str:
     # Check if any indicator is present
     for indicator in c_indicators:
         if indicator in text:
+            # Strip any leftover markdown fences that would cause compiler errors
+            text = re.sub(r'^```\w*\n?', '', text.strip())
+            text = re.sub(r'\n?```\s*$', '', text)
             return text.strip()
     
     # No indicators found — this is likely prose, not code
