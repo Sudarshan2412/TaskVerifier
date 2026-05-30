@@ -89,6 +89,24 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
         crashed = (exit_code == expected_crash_exit_code) if expected_crash_exit_code != 0 \
                   else (exit_code != 0 or bool(run_result.stderr.strip()))
 
+        # BUG FIX: Also detect crashes via sanitizer output in stderr.
+        # MSAN/ASAN abort() produces exit code 134 (SIGABRT), not necessarily
+        # the exit_code_vul value in the CVE entry. Check stderr for sanitizer
+        # keywords as a secondary detection path.
+        if not crashed:
+            sanitizer_keywords = [
+                'AddressSanitizer:', 'MemorySanitizer:',
+                'UndefinedBehaviorSanitizer:', 'LeakSanitizer:',
+                'SUMMARY: AddressSanitizer', 'SUMMARY: MemorySanitizer',
+                'SUMMARY: UndefinedBehaviorSanitizer',
+                'deadly signal',
+            ]
+            for kw in sanitizer_keywords:
+                if kw in run_result.stderr:
+                    print(f"[EXEC] ✓ Sanitizer crash detected via stderr keyword: {kw}")
+                    crashed = True
+                    break
+
         if crashed:
             print(f"[EXEC] ✓ CRASH detected!")
             return {
