@@ -60,6 +60,41 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "") -> Verif
     exec_result = check_execution(compiler_result['binary_path'], cve_entry)
     details['execution'] = exec_result
 
+    # Fast-path: skip the expensive critic for trivial failures
+    def _trivial_failure_feedback(execution_result: dict, poc_code: str) -> str | None:
+        """Returns a short feedback string if the failure is trivially diagnosable, else None."""
+        stderr = execution_result.get("stderr", "")
+        stdout = execution_result.get("stdout", "")
+        message = execution_result.get("message", "")
+
+        # Generator didn't write the file at all
+        if "did not create /tmp/poc" in message or "empty" in message.lower():
+            return (
+                "Your generator compiled and ran but did not write anything to /tmp/poc. "
+                "Make sure your C program calls fopen(\"/tmp/poc\", \"wb\") and fwrite/fputc, "
+                "then fclose before returning."
+            )
+
+        # Generator crashed before writing the file
+        if "generator timed out" in message or "Failed to run" in message:
+            return (
+                "Your generator program itself crashed or timed out before writing /tmp/poc. "
+                "Simplify the generator — it only needs to write a payload file, not perform complex logic."
+            )
+
+        # Infrastructure error — no point invoking critic
+        if "INFRASTRUCTURE ERROR" in message:
+            return message  # pass through as-is
+
+        # Payload structurally looks empty (0 bytes or only null bytes)
+        if poc_code and len(poc_code.strip()) < 50:
+            return (
+                "Your generator is too short to produce a meaningful payload. "
+                "Write a complete C program that constructs and writes a crafted input."
+            )
+
+        return None  # Not trivial — invoke the full critic
+
     if not exec_result['triggered']:
         base_feedback = build_feedback(compiler_result, execution_result=exec_result, 
                                   hallucinated_symbols=hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, previous_feedback=previous_feedback, cve_entry=cve_entry) # <--- ADDED HERE

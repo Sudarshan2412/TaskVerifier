@@ -19,16 +19,27 @@ class ContextManager:
     token budget constraints with intelligent truncation.
     """
 
-    def __init__(self, max_tokens: int = 6000):
+    def __init__(self, max_tokens: int = 800_000):
         """
         Initialize the context manager for a new trial.
         
         Args:
-            max_tokens: Maximum token budget (default 6000). Converted to character budget.
+            max_tokens: Maximum token budget (default 800K).
         """
         self.history: list[dict] = []
         self.max_tokens: int = max_tokens
-        self.char_budget: int = max_tokens * 4  # 1 token ≈ 4 characters
+        try:
+            # pyrefly: ignore [missing-import]
+            import tiktoken
+            self._enc = tiktoken.get_encoding("cl100k_base")
+            self._use_tiktoken = True
+        except ImportError:
+            self._use_tiktoken = False
+        self.char_budget: int = max_tokens * 4  # fallback
+
+    def add_system_message(self, content: str) -> None:
+        """Add a system message (should be called once, before any user messages)."""
+        self.history.insert(0, {"role": "system", "content": content})
 
     def add_user_message(self, content: str) -> None:
         """
@@ -95,75 +106,78 @@ class ContextManager:
         """
         Estimate the current token count of the history.
         
-        Uses simple approximation: 1 token ≈ 4 characters.
+        Uses accurate tiktoken count if available, otherwise simple approximation: 1 token ≈ 4 characters.
         
         Returns:
             Estimated token count
         """
+        if self._use_tiktoken:
+            return sum(len(self._enc.encode(msg["content"])) for msg in self.history)
         total_chars = sum(len(msg["content"]) for msg in self.history)
         return total_chars // 4
 
+    def log_context_usage(self) -> None:
+        """Log current context utilization — useful for debugging."""
+        tokens = self.token_estimate()
+        pct = (tokens / self.max_tokens) * 100
+        logger.info(
+            f"Context: {tokens:,} / {self.max_tokens:,} tokens ({pct:.1f}%) | "
+            f"{len(self.history)} messages"
+        )
+
     def _truncate_if_needed(self) -> None:
         """
-        Apply truncation strategy if history exceeds token budget.
+        Apply truncation ONLY if context exceeds the (now very large) budget.
         
-        Strategy:
-        1. Always keep the first message (initial CVE description)
-        2. Always keep the last 4 messages (last 2 turn pairs)
-        3. Drop middle messages (older attempts) until under budget
-        4. Log warnings when truncation occurs
+        At 800K tokens, a typical 5-attempt trial uses ~50-100K tokens,
+        so this should rarely fire. When it does:
+        1. Keep first message (CVE description + target source)
+        2. Keep ALL feedback messages (verifier output) — they are critical
+        3. Drop only raw LLM responses from the oldest attempts
+        4. Never drop the last 6 messages (3 complete turn pairs)
         """
-        # Calculate current total characters
-        total_chars = sum(len(msg["content"]) for msg in self.history)
+        current_tokens = self.token_estimate()
+        if current_tokens <= self.max_tokens:
+            return  # Within budget
 
-        # Check if over budget
-        if total_chars <= self.char_budget:
-            return  # Within budget, no truncation needed
-
-        # Extract first message (always keep)
-        first_message = self.history[0]
-
-        # Extract last 4 messages (keep last 2 turn pairs)
-        # If fewer than 5 messages total, keep all for now
-        if len(self.history) <= 5:
-            # Not enough messages to truncate meaningfully
-            logger.warning(
-                f"Context exceeds budget ({total_chars} chars) but not enough messages "
-                f"to truncate while preserving first + last 4. Keeping as-is."
-            )
+        logger.warning(
+            f"Context at {current_tokens} tokens exceeds {self.max_tokens} budget — truncating"
+        )
+        
+        # Keep first message + last 6 messages
+        if len(self.history) <= 7:
             return
-
-        last_4 = self.history[-4:]
-        middle = self.history[1:-4]
-
-        # Drop middle messages two at a time (one complete turn pair)
-        # from the oldest end until under budget
-        dropped_pairs = 0
-        while middle:
-            # Remove oldest pair (first 2 messages from middle)
-            if len(middle) >= 2:
-                middle = middle[2:]
-                dropped_pairs += 1
-
-                # Recalculate total
-                total_chars = len(first_message["content"]) + sum(
-                    len(msg["content"]) for msg in middle
-                ) + sum(len(msg["content"]) for msg in last_4)
-
-                if total_chars <= self.char_budget:
+        
+        first_message = self.history[0]
+        last_6 = self.history[-6:]
+        middle = self.history[1:-6]
+        
+        # Selectively summarize older assistant responses instead of dropping them
+        dropped = 0
+        while middle and self.token_estimate() > self.max_tokens:
+            # Find the oldest assistant message and truncate its content
+            for i, msg in enumerate(middle):
+                if msg["role"] == "assistant":
+                    # Keep just the code block, drop the prose
+                    code_start = msg["content"].find("```")
+                    if code_start >= 0:
+                        middle[i] = {"role": "assistant", "content": "[Earlier attempt — code preserved]\n" + msg["content"][code_start:]}
+                    else:
+                        middle.pop(i)
+                    dropped += 1
                     break
             else:
-                # Only 1 message left in middle, can't drop a full pair
-                break
-
-        # Reassemble history
-        self.history = [first_message] + middle + last_4
-
-        # Log the truncation
-        if dropped_pairs > 0:
-            logger.warning(
-                f"Context truncated: dropped {dropped_pairs} turn pair(s) to stay under token budget"
-            )
+                # No more assistant messages to trim, drop oldest pair
+                if len(middle) >= 2:
+                    middle = middle[2:]
+                    dropped += 1
+                else:
+                    break
+            
+            self.history = [first_message] + middle + last_6
+        
+        if dropped:
+            logger.warning(f"Truncated {dropped} older messages to fit context budget")
 
 
 if __name__ == "__main__":

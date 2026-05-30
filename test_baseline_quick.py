@@ -37,7 +37,6 @@ except Exception as e:
 print("\n[TEST 5] Check imports")
 from agent.code_extractor import extract_code, ExtractionError
 from evaluator import evaluate
-from logger import log_trial
 from verifier.hallucination_detector import detect_hallucinations
 from verifier import verify
 print("  ✓ All imports OK")

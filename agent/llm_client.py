@@ -15,6 +15,7 @@ BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEEPSEEK_MODEL = "deepseek/deepseek-v4-flash"
 NEMOTRON_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 DEFAULT_MODEL = DEEPSEEK_MODEL
+DEFAULT_MAX_RESPONSE_TOKENS = int(os.environ.get("MAX_RESPONSE_TOKENS", "16384"))
 
 
 def _extract_message_content(choice: dict) -> str | None:
@@ -51,7 +52,8 @@ def call_llm(
     prompt: str, 
     model: str = DEFAULT_MODEL,
     temperature: float = 0.6, 
-    max_retries: int = 2
+    max_retries: int = 2,
+    max_response_tokens: int = DEFAULT_MAX_RESPONSE_TOKENS
 ) -> str:
     """
     Send a single prompt string to the OpenRouter API and return the model's text response.
@@ -70,7 +72,7 @@ def call_llm(
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
-        "max_tokens": 2048,
+        "max_tokens": max_response_tokens,
         # OpenRouter reasoning models can otherwise return only
         # message.reasoning with content=None, which our pipeline cannot use.
         "reasoning": {"effort": "none", "exclude": True},
@@ -81,7 +83,7 @@ def call_llm(
         try:
             print(f"[DEBUG] Attempt {attempt + 1}/{max_retries}: Sending request to {BASE_URL}")
             print(f"[DEBUG] Payload model: {payload['model']}")
-            response = requests.post(BASE_URL, json=payload, headers=headers, timeout=(10, 30))
+            response = requests.post(BASE_URL, json=payload, headers=headers, timeout=(10, 120))
             print(f"[DEBUG] Response status: {response.status_code}")
             response.raise_for_status()
             data = response.json()
@@ -140,7 +142,8 @@ def call_llm_with_history(
     conversation: list[dict],
     model: str = DEFAULT_MODEL,
     temperature: float = 0.6,
-    max_retries: int = 2
+    max_retries: int = 2,
+    max_response_tokens: int = DEFAULT_MAX_RESPONSE_TOKENS
 ) -> str:
     """
     Send a multi-turn conversation to the OpenRouter API and return the model's reply.
@@ -164,7 +167,7 @@ def call_llm_with_history(
         "model": model,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": 2048,
+        "max_tokens": max_response_tokens,
         # OpenRouter reasoning models can otherwise return only
         # message.reasoning with content=None, which our pipeline cannot use.
         "reasoning": {"effort": "none", "exclude": True},
@@ -175,7 +178,7 @@ def call_llm_with_history(
         try:
             print(f"[DEBUG] Attempt {attempt + 1}/{max_retries}: Sending request to {BASE_URL}")
             print(f"[DEBUG] Payload model: {payload['model']}")
-            response = requests.post(BASE_URL, json=payload, headers=headers, timeout=(10, 30))
+            response = requests.post(BASE_URL, json=payload, headers=headers, timeout=(10, 120))
             print(f"[DEBUG] Response status: {response.status_code}")
             response.raise_for_status()
             data = response.json()
