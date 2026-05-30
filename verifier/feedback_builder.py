@@ -55,7 +55,7 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
         "Content-Type": "application/json"
     }
 
-    model_id = "deepseek/deepseek-v4-flash"
+    model_id = os.environ.get("CRITIC_MODEL", "deepseek/deepseek-v4-flash")
     url = "https://openrouter.ai/api/v1/chat/completions"
 
     messages = [
