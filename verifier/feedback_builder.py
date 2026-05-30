@@ -29,8 +29,8 @@ def execute_docker_tool(cmd_type: str, arg: str, image_name: str) -> str:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         output = res.stdout if res.returncode == 0 else res.stderr
 
-        if len(output) > 6000:
-            return output[:3000] + "\n...[TRUNCATED]...\n" + output[-3000:]
+        if len(output) > 50000:
+            return output[:25000] + "\n...[TRUNCATED]...\n" + output[-25000:]
 
         result = output if output else "Command executed but returned no output."
         print(f"[CRITIC] 🛠️  → {len(result):,} chars returned")
@@ -226,7 +226,7 @@ def build_feedback(
             f"CRITICAL: The generator program MUST write its output to exactly '/tmp/poc' (no extension).\n\n"
             f"Target Source Code:\n{target_source}\n\n"
             f"Agent's Generator Code:\n```c\n{poc_code}\n```\n\n"
-            f"Target Binary Output:\n{fuzzer_output[-1000:]}\n\n"
+            f"Target Binary Output:\n{fuzzer_output[-5000:]}\n\n"
             f"Use your SEARCH and READ tools to investigate."
         )
 

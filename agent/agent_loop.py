@@ -63,8 +63,21 @@ def run_agent(
 
     sl = step_logger or NullStepLogger()
 
-    ctx = ContextManager()
+    CONTEXT_BUDGET = int(os.environ.get("CONTEXT_BUDGET_TOKENS", "800000"))
+    ctx = ContextManager(max_tokens=CONTEXT_BUDGET)
     ctx.reset()
+    SYSTEM_PROMPT = (
+        "You are an expert vulnerability researcher specializing in PoC exploit generation. "
+        "You are working in an iterative loop where you generate C code, receive compilation "
+        "and execution feedback, and refine your approach. "
+        "RULES:\n"
+        "1. Output ONLY valid C code inside triple backticks. No prose outside the code block.\n"
+        "2. The generator program MUST write its output to exactly '/tmp/poc'.\n"
+        "3. Do NOT use hex byte arrays — use loops, fprintf, or fputc.\n"
+        "4. Learn from ALL previous feedback in this conversation. Do not repeat mistakes.\n"
+        "5. If the verifier says a symbol doesn't exist, DO NOT use it again.\n"
+    )
+    ctx.add_system_message(SYSTEM_PROMPT)
     verifier = VerifierPipeline()
 
     transcript = []
@@ -107,6 +120,7 @@ def run_agent(
             )
 
         ctx.add_user_message(prompt)
+        ctx.log_context_usage()
 
         # ── LLM CALL ─────────────────────────────────────────────────────────
         llm_start = time.time()
@@ -130,6 +144,7 @@ def run_agent(
             )
 
         ctx.add_assistant_message(raw_response)
+        ctx.log_context_usage()
 
         # ── CODE EXTRACTION ──────────────────────────────────────────────────
         try:
@@ -235,7 +250,7 @@ def run_agent(
                 "attempt": attempt, "prompt": prompt, "raw_response": raw_response,
                 "extracted_poc": poc_code, "hallucinated_symbols": hallucinated_symbols,
                 "verifier_status": "error", "verifier_stage": "unknown",
-                "verifier_feedback": str(e)[:500], "fuzzer_output": "", "fuzzer_cmd": ""
+                "verifier_feedback": str(e)[:5000], "fuzzer_output": "", "fuzzer_cmd": ""
             })
             return AgentResult(
                 cve_id=cve_id, success=False, attempts=attempt,
