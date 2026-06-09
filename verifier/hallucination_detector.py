@@ -79,10 +79,15 @@ def detect_hallucinations(target_source_code: str, poc_code: str) -> list:
 
     real_symbols = extract_symbols_from_source(source_code)
     clean_poc = _strip_comments(poc_code)
+    locally_defined = set(re.findall(
+        r'(?:static\s+)?(?:\w+\s+)+(\w+)\s*\([^)]*\)\s*\{', poc_code
+    ))
+    
     poc_symbols = extract_symbols_from_source(clean_poc)
-
     hallucinated = [
         sym for sym in poc_symbols
-        if sym not in real_symbols and sym not in STDLIB_NAMES
+        if sym not in real_symbols
+        and sym not in STDLIB_NAMES
+        and sym not in locally_defined  # ← add this
     ]
     return hallucinated
