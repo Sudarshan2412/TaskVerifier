@@ -15,11 +15,8 @@ class VerifierResult:
         return f"VerifierResult(status={self.status!r}, feedback={self.feedback[:60]!r}...)"
 
 def _extract_real_asan(stderr: str) -> dict:
-    """Parses actual AddressSanitizer output from Docker's stderr stream."""
     import re
-    
-    # Look for the exact ASAN/MSAN error type in the output
-    match = re.search(r'(AddressSanitizer|MemorySanitizer):\s*([^\n\r]+)', stderr)
+    match = re.search(r'(AddressSanitizer|MemorySanitizer|UndefinedBehaviorSanitizer):\s*([^\n\r]+)', stderr)
     
     if match:
         return {
@@ -29,11 +26,13 @@ def _extract_real_asan(stderr: str) -> dict:
             'stack_frames': []
         }
         
+    # If we got here, the exit code signaled a crash, but we couldn't parse the ASAN header.
+    # Don't say "Crash triggered" blindly, pass the actual stderr tail so the user/LLM can see it.
     return {
         'crashed': True, 
-        'crash_type': 'Crash triggered (See terminal for raw ASAN trace)', 
+        'crash_type': 'Raw Crash / Abnormal Exit (No ASAN header found)', 
         'crash_address': 'Unknown', 
-        'stack_frames': []
+        'stack_frames': stderr[-1000:] if stderr else "NO STDERR OUTPUT"
     }
     
 def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "") -> VerifierResult:

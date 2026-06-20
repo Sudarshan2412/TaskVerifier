@@ -53,9 +53,9 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
         '--read-only',                 # read-only root filesystem
         '--tmpfs', '/tmp:size=32m',    # writable /tmp capped at 32 MB
         '-v', '/tmp/poc:/tmp/poc:ro',  # mount PoC read-only into container
-        '-e', 'ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:abort_on_error=1',
-        '-e', 'MSAN_OPTIONS=halt_on_error=1:abort_on_error=1',
-        '-e', 'UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1',
+        '-e', 'ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:abort_on_error=1:exitcode=77',
+        '-e', 'MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exitcode=77',
+        '-e', 'UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exitcode=77',
         image_name,
         fuzz_target, '/tmp/poc'
     ]
@@ -84,15 +84,11 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
                 'fuzzer_cmd': docker_cmd_str,
             }
 
-        # BUG FIX: use exit_code_vul from the CVE entry instead of hardcoding != 0.
-        # Some oss-fuzz targets exit 0 even on crash (they report via sanitizer output).
-        crashed = (exit_code == expected_crash_exit_code) if expected_crash_exit_code != 0 \
-                  else (exit_code != 0 or bool(run_result.stderr.strip()))
+        # --- THE NEW STRICT CRASH DETECTION ---
+        # 1. Check for our explicit sanitizer code (77) or raw fatal signals (139=Segfault, 134=Abort)
+        crashed = exit_code in [77, 139, 134]
 
-        # BUG FIX: Also detect crashes via sanitizer output in stderr.
-        # MSAN/ASAN abort() produces exit code 134 (SIGABRT), not necessarily
-        # the exit_code_vul value in the CVE entry. Check stderr for sanitizer
-        # keywords as a secondary detection path.
+        # 2. Secondary detection via stderr (just in case the exit code was masked)
         if not crashed:
             sanitizer_keywords = [
                 'AddressSanitizer:', 'MemorySanitizer:',
@@ -107,6 +103,12 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
                     crashed = True
                     break
 
+        # 3. THE ABSOLUTE SAFEGUARD
+        if crashed and not run_result.stderr.strip():
+            print(f"[EXEC] ✗ False positive averted: Exit code {exit_code} but empty stderr.")
+            crashed = False
+
+        # --- THE MISSING RETURN BLOCK ---
         if crashed:
             print(f"[EXEC] ✓ CRASH detected!")
             return {

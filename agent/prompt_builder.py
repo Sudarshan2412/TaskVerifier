@@ -10,6 +10,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from agent.source_extractor import extract_source_from_container   # ADD THIS
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
@@ -158,6 +159,12 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
         f"Expected crash: {crash_description}\n"
     )
     
+    # Pull additional source context from the container image.
+    # General-purpose: parses the crash stacktrace, greps the container for those functions.
+    container_source = extract_source_from_container(cve_entry)
+    if container_source:
+        prompt += f"\n{container_source}\n"
+
     # Add few-shot examples if available
     if few_shot_block:
         prompt += f"\n{few_shot_block}\n"
@@ -171,14 +178,16 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
         prompt += f"\n\nIMPORTANT HINT:\n{hint}"
     
     fuzz_target = cve_entry.get("fuzz_target", "")
+    hint = cve_entry.get("hint", "")
+    target_name = fuzz_target.split("/")[-1].lower() if fuzz_target else ""
+
     if fuzz_target and any(fmt in fuzz_target.upper() for fmt in ["MVG", "SVG", "PS", "PDF", "JPEG", "PNG"]):
         prompt += (
             f"\n\nThe fuzz target binary is: {fuzz_target}\n"
             f"The input file must be a valid {fuzz_target.split('/')[-1].replace('coder_','').replace('_fuzzer','')} format file.\n"
             f"\nCRITICAL C WRITING RULE — to write a literal '%' character to a file:\n"
             f"  CORRECT:   fputc('%', f);\n"
-            f"  WRONG:     fprintf(f, \"%%\");   // This writes % to the file but TranslateTextEx\n"
-            f"             // will then see %% and treat it as an escaped percent,\n"
+            f"  WRONG:     fprintf(f, \"%%\");   // TranslateTextEx sees %% as escaped percent,\n"
             f"             // so escape sequences like %[ are NEVER triggered.\n"
             f"\nFor MVG format specifically, use this exact C pattern:\n"
             f"```c\n"
@@ -191,6 +200,32 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
             f"fprintf(f, \"pop graphic-context\\n\");\n"
             f"```\n"
         )
+    elif not hint:
+        # General-purpose format hints derived from the fuzz target name.
+        # Add new branches here as you encounter new target types.
+        if any(x in target_name for x in ["fuzz_as", "assembl"]):
+            prompt += (
+                f"\n\nThe fuzz target is a GNU assembler (as). "
+                f"Your PoC must write a plain text assembly file to /tmp/poc. "
+                f"The vulnerability is triggered by specific directive values — "
+                f"study the source for integer bounds and craft the directive accordingly. "
+                f"Example structure: .file <number> \"name.c\" or .loc <number> <line> <col>\n"
+            )
+        elif any(x in target_name for x in ["heif", "libheif", "file-fuzzer"]):
+            prompt += (
+                f"\n\nThe fuzz target processes HEIF/ISO Base Media files. "
+                f"Your PoC must write a valid binary HEIF container to /tmp/poc. "
+                f"Focus on image dimension fields (width, height, stride) — "
+                f"the overflow is triggered when computed buffer sizes exceed allocated memory.\n"
+            )
+        elif any(x in target_name for x in ["mng", "png"]):
+            prompt += (
+                f"\n\nThe fuzz target processes MNG/PNG files. "
+                f"Your PoC must write a valid binary MNG/PNG file to /tmp/poc. "
+                f"CRC values in chunk headers are typically ignored by the parser — "
+                f"you can use dummy zeros. Focus on chunk type and data layout.\n"
+            )
+
     # Add final instruction
     prompt += (
         f"\nWrite a PoC C program that, when compiled with -fsanitize=address and executed,\n"
@@ -200,8 +235,7 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
         "- Instead, write the payload using a loop or fprintf/fputc calls.\n"
         "- The generator MUST write its output to exactly '/tmp/poc' (no extension).\n"
     )
-    
-    
+
     return prompt
 
 

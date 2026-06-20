@@ -259,7 +259,24 @@ def run_agent(
                 hallucinated_symbols_per_attempt=hallucinated_per_attempt
             )
 
-        last_feedback_text = result.feedback
+        # If compile failed due to a hallucinated external library,
+        # override the generic feedback with an environment-specific message.
+        # The critic LLM currently tells the model to "apt-get install zlib1g-dev"
+        # which is impossible inside the build environment.
+        ENV_UNAVAILABLE = {"zlib.h", "png.h", "jpeglib.h", "openssl/md5.h", "openssl"}
+        if (result.status == "compile_fail"
+                and hallucinated_symbols
+                and ENV_UNAVAILABLE.intersection(hallucinated_symbols)):
+            unavailable = list(ENV_UNAVAILABLE.intersection(hallucinated_symbols))
+            last_feedback_text = (
+                f"Compilation failed because {unavailable} are not available "
+                f"in the build environment and cannot be installed.\n"
+                f"You must implement the required functionality (e.g. CRC32) "
+                f"inline in pure C using only the standard library (stdio.h, stdlib.h, string.h).\n"
+                f"Original error:\n{result.feedback}"
+            )
+        else:
+            last_feedback_text = result.feedback
 
         # ── TRANSCRIPT ENTRY ─────────────────────────────────────────────────
         exec_details = result.details.get("execution", {}) if hasattr(result, "details") else {}
