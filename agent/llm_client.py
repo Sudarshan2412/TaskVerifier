@@ -14,7 +14,7 @@ BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 # Model Selection
 DEEPSEEK_MODEL = "deepseek/deepseek-v4-flash"
 NEMOTRON_MODEL = "nvidia/nemotron-3-super-120b-a12b"
-DEFAULT_MODEL = DEEPSEEK_MODEL
+DEFAULT_MODEL = NEMOTRON_MODEL
 DEFAULT_MAX_RESPONSE_TOKENS = int(os.environ.get("MAX_RESPONSE_TOKENS", "16384"))
 
 
