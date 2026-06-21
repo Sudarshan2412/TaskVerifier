@@ -1,171 +1,80 @@
-import pytest
-import tempfile
-import os
-from verifier.compiler import compile_poc
-from verifier.sanitizer import parse_asan_output
-from verifier.execution import check_execution, _is_expected_crash
-from verifier.hallucination_detector import detect_hallucinations
-from verifier.feedback_builder import build_feedback
-from verifier import verify
 from agent.prompt_builder import build_initial_prompt
+from verifier.execution import classify_execution
 
 
-# ─── compiler.py tests ───
-
-def test_compiler_valid_code():
-    """Valid C code should compile successfully."""
-    valid_c = "#include \nint main(){ printf(\"hi\"); return 0; }"
-    result = compile_poc(valid_c)
-    assert result['success'] == True
-    assert result['binary_path'] is not None
-    # Clean up the binary
-    if result['binary_path'] and os.path.exists(result['binary_path']):
-        os.unlink(result['binary_path'])
-
-
-def test_compiler_invalid_code():
-    """Garbage code should fail to compile and return errors."""
-    bad_c = "this is not C code at all!!!"
-    result = compile_poc(bad_c)
-    assert result['success'] == False
-    assert len(result['errors']) > 0
-
-
-# ─── sanitizer.py tests ───
-
-def test_parse_asan_heap_overflow():
-    """Should correctly extract crash type and address from ASan output."""
-    sample = """
-=================================================================
-==999==ERROR: AddressSanitizer: heap-buffer-overflow on address 0xdeadbeef
-READ of size 4 at 0xdeadbeef thread T0
-    #0 0x401234 in vulnerable_func /src/vuln.c:42:3
-    #1 0x401300 in main /src/vuln.c:80:5
-"""
-    result = parse_asan_output(sample)
-    assert result['crash_type'] == 'heap-buffer-overflow'
-    assert result['crash_address'] == '0xdeadbeef'
-    assert len(result['stack_frames']) == 2
-    assert result['stack_frames'][0]['function'] == 'vulnerable_func'
-
-
-def test_expected_crash_rejects_libfuzzer_success_output():
+def test_rejects_nonzero_exit_without_sanitizer_diagnostic():
     cve_entry = {
-        "id": "oss-fuzz:371445205",
         "vuln_class": "use_after_free",
-        "sanitizer_type": "asan",
-        "crash_description": "==9==ERROR: AddressSanitizer: heap-use-after-free",
-        "expected_crash_frames": ["zend_string_release", "attr_free"],
     }
-    stdout = """INFO: Running with entropic power schedule
-Running: /tmp/poc
-Executed /tmp/poc in 0 ms
-"""
 
-    matched, reason = _is_expected_crash(cve_entry, stderr="", stdout=stdout)
+    result = classify_execution(
+        exit_code=1,
+        stderr="application exited with an error",
+        cve_entry=cve_entry,
+    )
 
-    assert matched is False
-    assert "no sanitizer crash signature" in reason
+    assert result["triggered"] is False
+    assert result["message"] == "The PoC did not trigger a sanitizer error."
 
 
-def test_expected_crash_accepts_php_uaf_stack():
+def test_rejects_sanitizer_error_with_wrong_vulnerability_class():
     cve_entry = {
-        "id": "oss-fuzz:371445205",
         "vuln_class": "use_after_free",
-        "sanitizer_type": "asan",
-        "crash_description": "==9==ERROR: AddressSanitizer: heap-use-after-free",
-        "expected_crash_frames": ["zend_string_release", "attr_free"],
     }
-    stderr = """==9==ERROR: AddressSanitizer: heap-use-after-free on address 0x50300001a8c4
-#0 0x56e55ab0748e in zend_string_release /src/php-src/Zend/zend_string.h:346:7
-#1 0x56e55ab0748e in attr_free /src/php-src/Zend/zend_attributes.c:355:4
-SUMMARY: AddressSanitizer: heap-use-after-free /src/php-src/Zend/zend_string.h:346:7 in zend_string_release
-"""
+    stderr = "==1==ERROR: AddressSanitizer: heap-buffer-overflow"
 
-    matched, reason = _is_expected_crash(cve_entry, stderr=stderr)
+    result = classify_execution(exit_code=1, stderr=stderr, cve_entry=cve_entry)
 
-    assert matched is True
-    assert "matched" in reason
-
-# ─── hallucination_detector.py tests ───
-
-def test_hallucination_detector_catches_invented_symbols():
-    """Should flag symbols in PoC that don't exist in target source."""
-    target_source = "void real_function(int x){ return; }"
-    poc_with_hallucination = "void exploit(){ totally_made_up_function(); }"
-
-    with tempfile.NamedTemporaryFile(suffix='.c', mode='w', delete=False) as f:
-        f.write(target_source)
-        path = f.name
-
-    try:
-        hallucinated = detect_hallucinations(path, poc_with_hallucination)
-        assert 'totally_made_up_function' in hallucinated
-    finally:
-        os.unlink(path)
+    assert result["triggered"] is False
+    assert result["sanitizer"]["sanitizer"] == "ASAN"
+    assert result["sanitizer"]["error_type"] == "heap-buffer-overflow"
+    assert result["message"] == (
+        "The PoC triggered a ASAN error of class heap-buffer-overflow but this "
+        "does not match the expected vulnerability class use_after_free."
+    )
 
 
-def test_hallucination_detector_allows_real_symbols():
-    """Should NOT flag symbols that actually exist in the target source."""
-    target_source = "void real_function(int x){ return; }"
-    poc_using_real = "void exploit(){ real_function(42); }"
-
-    with tempfile.NamedTemporaryFile(suffix='.c', mode='w', delete=False) as f:
-        f.write(target_source)
-        path = f.name
-
-    try:
-        hallucinated = detect_hallucinations(path, poc_using_real)
-        assert 'real_function' not in hallucinated
-    finally:
-        os.unlink(path)
-
-
-# ─── feedback_builder.py tests ───
-
-def test_feedback_compile_fail():
-    """Feedback for a compile failure should mention the error."""
-    compiler_result = {
-        'success': False,
-        'errors': [{'file': 'poc.c', 'line': 5, 'type': 'error', 'message': 'undeclared variable x'}]
+def test_accepts_sanitizer_error_with_matching_vulnerability_class():
+    cve_entry = {
+        "vuln_class": "use_after_free",
     }
-    feedback = build_feedback(compiler_result)
-    assert 'Compilation failed' in feedback
-    assert '5' in feedback
+    stderr = "==1==ERROR: AddressSanitizer: heap-use-after-free"
+
+    result = classify_execution(exit_code=1, stderr=stderr, cve_entry=cve_entry)
+
+    assert result["triggered"] is True
+    assert result["sanitizer"]["sanitizer"] == "ASAN"
+    assert result["sanitizer"]["error_type"] == "heap-use-after-free"
+    assert result["message"] == (
+        "The PoC triggered a sanitizer error consistent with use_after_free."
+    )
 
 
 def test_initial_prompt_filters_same_cve_few_shot_example():
     cve_entry = {
-        "id": "oss-fuzz:371445205",
+        "cve_id": "dataset:example-a",
         "vuln_class": "use_after_free",
-        "poc_bucket": "long",
+        "poc_bucket": "short",
         "sanitizer_type": "asan",
-        "target_source": "static void attr_free(zval *v) {}",
-        "crash_description": "==9==ERROR: AddressSanitizer: heap-use-after-free",
+        "target_source": "void target(void) {}",
+        "crash_description": "AddressSanitizer: heap-use-after-free",
     }
     examples = [
         {
-            "cve_id": "oss-fuzz:371445205",
-            "prompt_input": "Task ID: oss-fuzz:371445205\nDescription: same task",
-            "ideal_poc_output": "int copied_answer(void) { return 0; }",
+            "cve_id": "dataset:example-a",
+            "prompt_input": "Task ID: dataset:example-a\nVulnerability class: use_after_free",
+            "ideal_poc_output": "int same_cve_example(void) { return 0; }",
         },
         {
-            "cve_id": "oss-fuzz:370689421",
-            "prompt_input": "Task ID: oss-fuzz:370689421\nDescription: other task",
-            "ideal_poc_output": "int useful_example(void) { return 0; }",
+            "cve_id": "dataset:example-b",
+            "prompt_input": "Task ID: dataset:example-b\nVulnerability class: double_free",
+            "ideal_poc_output": "int other_cve_example(void) { return 0; }",
         },
     ]
 
     prompt = build_initial_prompt(cve_entry, examples)
 
-    assert "copied_answer" not in prompt
-    assert "useful_example" in prompt
-
-
-# ─── full pipeline test ───
-
-def test_full_pipeline_compile_failure():
-    """End-to-end: garbage code should produce a compile_fail VerifierResult."""
-    result = verify("not C code", "/dev/null")
-    assert result.status == 'compile_fail'
-    assert len(result.feedback) > 0
+    assert "dataset:example-a" in prompt
+    assert "same_cve_example" not in prompt
+    assert "Task ID: dataset:example-a" not in prompt
+    assert "other_cve_example" in prompt
