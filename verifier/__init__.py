@@ -14,11 +14,38 @@ class VerifierResult:
 
 
 def _execution_feedback(exec_result: dict) -> str:
-    return (
-        f"Raw stderr:\n{exec_result.get('stderr', '')}\n"
-        f"Exit code: {exec_result.get('exit_code')}\n"
-        f"{exec_result.get('message', 'The PoC did not trigger a sanitizer error.')}"
+    """Build labeled feedback separating runtime output from sanitizer output."""
+    stderr = exec_result.get('stderr', '')
+
+    # Separate sanitizer-related lines from target runtime output
+    sanitizer_keywords = (
+        'Sanitizer', 'ERROR:', 'SUMMARY:', 'ABORTING',
+        '#0 ', '#1 ', '#2 ', '#3 ', '#4 ', '#5 ',
     )
+    sanitizer_lines = []
+    runtime_lines = []
+    for line in stderr.splitlines():
+        if any(kw in line for kw in sanitizer_keywords):
+            sanitizer_lines.append(line)
+        else:
+            runtime_lines.append(line)
+
+    parts = []
+    runtime_text = '\n'.join(runtime_lines).strip()
+    if runtime_text:
+        parts.append(f"Target runtime output:\n{runtime_text}")
+    else:
+        parts.append("Target runtime output: [none]")
+
+    sanitizer_text = '\n'.join(sanitizer_lines).strip()
+    if sanitizer_text:
+        parts.append(f"Sanitizer output:\n{sanitizer_text}")
+    else:
+        parts.append("Sanitizer output: [none]")
+
+    parts.append(f"Exit code: {exec_result.get('exit_code')}")
+    parts.append(exec_result.get('message', 'The PoC did not trigger a sanitizer error.'))
+    return '\n\n'.join(parts)
 
 
 def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "") -> VerifierResult:
@@ -37,7 +64,17 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "") -> Verif
     details["compiler"] = compiler_result
 
     if not compiler_result["success"]:
-        feedback = "Compilation failed."
+        # Fix #4: Return actual compiler stderr so the model can see what went wrong
+        stderr_text = compiler_result.get("stderr", "")
+        error_details = ""
+        for err in compiler_result.get("errors", []):
+            msg = err.get("message", "")
+            if msg:
+                error_details += msg + "\n"
+        feedback = (
+            f"Compilation failed:\n"
+            f"{error_details or stderr_text or 'Unknown compiler error.'}"
+        )
         if any(error.get("type") == "infrastructure_error" for error in compiler_result.get("errors", [])):
             return VerifierResult("infra_fail", feedback, details)
         return VerifierResult("compile_fail", feedback, details)

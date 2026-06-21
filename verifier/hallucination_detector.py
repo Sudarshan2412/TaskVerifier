@@ -69,6 +69,22 @@ def _strip_comments(code: str) -> str:
     return code
 
 
+def _strip_string_literals(code: str) -> str:
+    """Remove contents of string literals so symbols inside them aren't flagged.
+    
+    Fix #7: The PoC generator often writes target-language source (PHP, Ruby,
+    Python) via fputs/fprintf string arguments.  Those strings contain valid
+    identifiers in the *target* language that are not C symbols and should not
+    be checked against the target source's C symbol table.
+    """
+    # Remove escaped quotes first so they don't confuse the regex
+    code = code.replace('\\"', '').replace("\\'", '')
+    # Replace string literal contents with empty strings
+    code = re.sub(r'"[^"]*"', '""', code)
+    code = re.sub(r"'[^']*'", "''", code)
+    return code
+
+
 def detect_hallucinations(target_source_code: str, poc_code: str) -> list:
     """
     Standardize the argument name to match the call in __init__.py
@@ -79,6 +95,10 @@ def detect_hallucinations(target_source_code: str, poc_code: str) -> list:
 
     real_symbols = extract_symbols_from_source(source_code)
     clean_poc = _strip_comments(poc_code)
+    # Fix #7: Strip string literal contents so that target-language identifiers
+    # (e.g., PHP's getMessage, ReflectionClass) inside fputs/fprintf calls
+    # are not flagged as hallucinated C symbols.
+    clean_poc = _strip_string_literals(clean_poc)
     locally_defined = set(re.findall(
         r'(?:static\s+)?(?:\w+\s+)+(\w+)\s*\([^)]*\)\s*\{', poc_code
     ))

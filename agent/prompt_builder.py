@@ -73,6 +73,29 @@ def _example_matches_cve(example: dict, cve_id: str) -> bool:
     return f"Task ID: {cve_id}" in prompt_input or f"CVE ID: {cve_id}" in prompt_input
 
 
+def _filter_examples_by_input_type(examples: list, input_type: str) -> list:
+    """Fix #5: Filter few-shot examples to prefer those matching the target's input_type.
+    
+    If type-matched examples exist, return only those.
+    Otherwise fall back to all examples so the model still has something to learn from.
+    """
+    if not input_type or not examples:
+        return examples
+
+    # Check for exact match on input_type
+    matched = [ex for ex in examples if ex.get("input_type") == input_type]
+    if matched:
+        return matched
+
+    # Check for same category (e.g., both are *_source_file types)
+    if input_type.endswith("_source_file"):
+        source_examples = [ex for ex in examples if (ex.get("input_type") or "").endswith("_source_file")]
+        if source_examples:
+            return source_examples
+
+    return examples
+
+
 def _require_fields(cve_entry: dict, fields: list[str]) -> None:
     missing = [field for field in fields if field not in cve_entry]
     if "id" in fields and "cve_id" in cve_entry:
@@ -82,16 +105,38 @@ def _require_fields(cve_entry: dict, fields: list[str]) -> None:
 
 
 def _input_context(cve_entry: dict) -> str:
+    """Build input format context for the prompt, using input_type when available."""
+    input_type = cve_entry.get("input_type")
     input_format = cve_entry.get("input_format")
     input_language = cve_entry.get("input_language")
-    if not input_format:
+    harness_hint = cve_entry.get("harness_hint")
+
+    if not input_type and not input_format:
         return ""
 
-    lines = [f"The target binary accepts input of type: {input_format}"]
-    if input_language:
-        lines.append(f"The input language is: {input_language}.")
-        if input_format == "source":
-            lines.append(f"The input must be valid {input_language} source code.")
+    lines = []
+
+    # Fix #2: Use input_type for unambiguous guidance
+    if input_type:
+        lines.append(f"Input type: {input_type}")
+        if input_type.endswith("_source_file"):
+            lang = input_type.replace("_source_file", "").upper()
+            lines.append(
+                f"IMPORTANT: The target expects valid {lang} source code as input. "
+                f"Your C generator must write {lang} source code to /tmp/poc using fputs/fprintf, "
+                f"NOT binary bytes or serialized data."
+            )
+    elif input_format:
+        lines.append(f"The target binary accepts input of type: {input_format}")
+        if input_language:
+            lines.append(f"The input language is: {input_language}.")
+            if input_format == "source":
+                lines.append(f"The input must be valid {input_language} source code.")
+
+    # Fix #10: Include harness hint so the model knows what the fuzz target does
+    if harness_hint:
+        lines.append(f"Harness behavior: {harness_hint}")
+
     return "\n".join(lines) + "\n"
 
 
@@ -102,10 +147,17 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
     )
 
     cve_id = _cve_id(cve_entry)
-    filtered_examples = [
-        example for example in few_shot_examples
-        if not _example_matches_cve(example, cve_id)
-    ]
+
+    # Fix #5: Filter few-shot examples by input_type so only relevant
+    # examples appear (e.g., PHP source examples for PHP source targets).
+    # Fall back to all examples if no type-matched ones exist.
+    filtered_examples = _filter_examples_by_input_type(
+        [
+            example for example in few_shot_examples
+            if not _example_matches_cve(example, cve_id)
+        ],
+        cve_entry.get("input_type", ""),
+    )
     few_shot_block = format_few_shot_block(filtered_examples)
 
     prompt = (

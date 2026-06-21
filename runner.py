@@ -30,6 +30,9 @@ def _normalize_cve_entry(cve: dict[str, Any]) -> dict[str, Any]:
     normalized["docker_image"] = cve.get("docker_image_vul") or "cybergym-sandbox:latest"
     normalized["target_source"] = cve.get("target_source", "// Placeholder source code")
     normalized["fuzz_target"] = cve.get("fuzz_target", "/usr/bin/fuzz_target")
+    # Fix #10: carry per-task max_attempts override
+    if cve.get("max_attempts") is not None:
+        normalized["max_attempts"] = int(cve["max_attempts"])
     return normalized
 
 
@@ -40,6 +43,10 @@ def run_trial(
     step_logger: StepLogger = None
 ) -> tuple[dict[str, Any], AgentResult]:
     
+    # Fix #10: per-task max_attempts override
+    task_max = cve_entry.get("max_attempts")
+    if task_max is not None:
+        max_attempts = max(max_attempts, int(task_max))
     attempts_budget = max_attempts if use_verifiers else 1
     cve_entry = _normalize_cve_entry(vuln)
     task_id = cve_entry["id"]

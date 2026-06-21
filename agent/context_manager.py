@@ -125,14 +125,128 @@ class ContextManager:
             f"{len(self.history)} messages"
         )
 
+    def summarize_older_attempts(self, keep_recent: int = 3) -> None:
+        """Fix #8: Summarize older failed attempts to one-line descriptions.
+
+        Keeps the system message, the initial prompt (first user message),
+        and the last ``keep_recent`` full turn-pairs (user + assistant)
+        verbatim.  Earlier turn-pairs are collapsed into a single summary
+        message so the model still knows what was tried without drowning
+        in stale code.
+
+        Called automatically after every assistant message is added.
+        """
+        # A "turn pair" is (user, assistant).  We need at least
+        # keep_recent pairs beyond the system + initial prompt to bother.
+        # Layout: [system, user_0, asst_0, user_1, asst_1, ...]
+        #          ^^^^    ^^^^^^  initial prompt always kept
+
+        # Find the boundary between "always keep" and "turn pairs"
+        non_turn_prefix = []
+        turn_pairs: list[tuple[dict, dict]] = []
+
+        idx = 0
+        # Collect system messages
+        while idx < len(self.history) and self.history[idx]["role"] == "system":
+            non_turn_prefix.append(self.history[idx])
+            idx += 1
+
+        # Collect turn pairs (user, assistant)
+        while idx + 1 < len(self.history):
+            if self.history[idx]["role"] == "user" and self.history[idx + 1]["role"] == "assistant":
+                turn_pairs.append((self.history[idx], self.history[idx + 1]))
+                idx += 2
+            else:
+                # Orphan message — keep it in the prefix
+                non_turn_prefix.append(self.history[idx])
+                idx += 1
+
+        # Any trailing unpaired message (e.g. a user message awaiting response)
+        trailing = list(self.history[idx:])
+
+        if len(turn_pairs) <= keep_recent:
+            return  # Nothing to summarize
+
+        old_pairs = turn_pairs[:-keep_recent]
+        recent_pairs = turn_pairs[-keep_recent:]
+
+        # Build a compact summary of old attempts
+        summary_lines = []
+        for pair_idx, (user_msg, asst_msg) in enumerate(old_pairs, start=1):
+            # Extract a one-line description from the assistant's response
+            approach = self._extract_approach_summary(asst_msg["content"])
+            # Extract the verifier outcome from the following user feedback
+            outcome = self._extract_outcome(user_msg["content"])
+            summary_lines.append(f"Attempt {pair_idx}: {approach} → {outcome}")
+
+        summary_text = (
+            "--- Earlier attempts (summarized) ---\n"
+            + "\n".join(summary_lines)
+            + "\n--- End of earlier attempts ---"
+        )
+        summary_msg = {"role": "user", "content": summary_text}
+
+        # Rebuild history: prefix + summary + recent full pairs + trailing
+        self.history = list(non_turn_prefix)
+        self.history.append(summary_msg)
+        for user_msg, asst_msg in recent_pairs:
+            self.history.append(user_msg)
+            self.history.append(asst_msg)
+        self.history.extend(trailing)
+
+        logger.info(
+            f"Summarized {len(old_pairs)} older attempts into one-line descriptions; "
+            f"keeping {len(recent_pairs)} recent full pairs"
+        )
+
+    @staticmethod
+    def _extract_approach_summary(assistant_content: str) -> str:
+        """Pull a one-line summary from an assistant response (code block)."""
+        # Look for fputs/fprintf patterns to identify "wrote PHP source" etc.
+        if "fputs" in assistant_content or "fprintf" in assistant_content:
+            if "<?php" in assistant_content:
+                return "wrote PHP source code via fputs"
+            if "<?xml" in assistant_content:
+                return "wrote XML input"
+            return "wrote text payload via fputs/fprintf"
+        if "fputc(0x" in assistant_content or "fwrite" in assistant_content:
+            return "wrote binary byte payload"
+        if "poc[]" in assistant_content:
+            return "used static byte array"
+        # Fallback: first non-comment line from the code block
+        import re
+        code_match = re.search(r'```c?\n(.*?)```', assistant_content, re.DOTALL)
+        if code_match:
+            for line in code_match.group(1).splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("//") and not stripped.startswith("/*"):
+                    return stripped[:80]
+        return "[approach unclear]"
+
+    @staticmethod
+    def _extract_outcome(user_content: str) -> str:
+        """Pull the verifier outcome from user feedback message."""
+        content_lower = user_content.lower()
+        if "compilation failed" in content_lower or "compile_fail" in content_lower:
+            return "compile_fail"
+        if "sanitizer output:" in content_lower:
+            if "sanitizer output: [none]" in content_lower or "sanitizer output:\n[none]" in content_lower:
+                return "no_crash"
+            return "sanitizer_triggered"
+        if "no_crash" in content_lower or "did not trigger" in content_lower:
+            return "no_crash"
+        if "crash" in content_lower:
+            return "crash"
+        return "no_crash"
+
     def _truncate_if_needed(self) -> None:
         """
-        Apply truncation ONLY if context exceeds the (now very large) budget.
-        
-        At 800K tokens, a typical 5-attempt trial uses ~50-100K tokens,
-        so this should rarely fire. When it does:
+        Apply truncation if context exceeds the budget.
+
+        This is a safety net on top of ``summarize_older_attempts()``.
+        At 800K tokens a typical trial rarely hits this, but when it does:
         1. Keep first message (CVE description + target source)
-        2. Keep ALL feedback messages (verifier output) — they are critical
+        2. Keep ALL feedback messages (verifier output)
         3. Drop only raw LLM responses from the oldest attempts
         4. Never drop the last 6 messages (3 complete turn pairs)
         """
@@ -143,15 +257,15 @@ class ContextManager:
         logger.warning(
             f"Context at {current_tokens} tokens exceeds {self.max_tokens} budget — truncating"
         )
-        
+
         # Keep first message + last 6 messages
         if len(self.history) <= 7:
             return
-        
+
         first_message = self.history[0]
         last_6 = self.history[-6:]
         middle = self.history[1:-6]
-        
+
         # Selectively summarize older assistant responses instead of dropping them
         dropped = 0
         while middle and self.token_estimate() > self.max_tokens:
@@ -173,9 +287,9 @@ class ContextManager:
                     dropped += 1
                 else:
                     break
-            
+
             self.history = [first_message] + middle + last_6
-        
+
         if dropped:
             logger.warning(f"Truncated {dropped} older messages to fit context budget")
 

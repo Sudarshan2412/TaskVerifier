@@ -72,6 +72,9 @@ def _normalize_cve_entry(cve: dict) -> dict:
     # BUG FIX: carry exit_code_vul so execution.py knows what a crash looks like
     # for this specific CVE (some targets exit 0 even on crash).
     normalized["exit_code_vul"]    = cve.get("exit_code_vul", 1)
+    # Fix #10: carry per-task max_attempts override
+    if cve.get("max_attempts") is not None:
+        normalized["max_attempts"] = int(cve["max_attempts"])
     return normalized
 
 
@@ -110,7 +113,9 @@ for i, cve in enumerate(test_cves, start=1):
         )
 
     try:
-        result = run_agent(cve_entry=cve, max_attempts=MAX_ATTEMPTS, step_logger=step_logger)
+        # Fix #10: Use per-task max_attempts if specified in the dataset entry
+        effective_max = max(MAX_ATTEMPTS, cve.get("max_attempts", MAX_ATTEMPTS))
+        result = run_agent(cve_entry=cve, max_attempts=effective_max, step_logger=step_logger)
 
         result_dict = {
             "cve_id":     cve_id,

@@ -99,9 +99,17 @@ def sanitizer_error_matches_vuln_class(error_type: str, vuln_class: str) -> bool
 def classify_execution(exit_code: int, stderr: str, cve_entry: dict) -> dict:
     diagnostic = parse_sanitizer_diagnostic(stderr)
     vuln_class = cve_entry.get("vuln_class", "")
-    matched = diagnostic["present"] and sanitizer_error_matches_vuln_class(
-        diagnostic["error_type"],
-        vuln_class,
+
+    # Fix #6: Require non-trivial stderr to prevent false positives from
+    # coincidental short output (e.g. "<?ph" triggering a non-zero exit code).
+    stderr_is_substantial = len((stderr or "").strip()) > 20
+    matched = (
+        diagnostic["present"]
+        and stderr_is_substantial
+        and sanitizer_error_matches_vuln_class(
+            diagnostic["error_type"],
+            vuln_class,
+        )
     )
 
     if matched:

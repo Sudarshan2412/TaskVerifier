@@ -52,12 +52,54 @@ class AgentResult:
     hallucinated_symbols_per_attempt: list[list[str]] = field(default_factory=list)
 
 
+def _compute_poc_signature(poc_code: str) -> str:
+    """Fix #9: Classify the PoC's structural approach into a short signature.
+
+    Two PoCs with the same signature are using the same high-level strategy
+    even if the exact bytes differ.  This lets us detect "stuck in a loop"
+    situations where the model keeps trying minor variations of one idea.
+    """
+    parts = []
+    # Payload delivery method
+    if 'fputs(' in poc_code or 'fprintf(' in poc_code:
+        parts.append('text_write')
+    elif 'fputc(0x' in poc_code:
+        parts.append('binary_fputc')
+    elif 'fwrite(' in poc_code:
+        parts.append('binary_fwrite')
+    elif 'poc[]' in poc_code or 'unsigned char poc' in poc_code:
+        parts.append('static_array')
+    else:
+        parts.append('other')
+
+    # Content type heuristics
+    if '<?php' in poc_code:
+        parts.append('php_source')
+    elif 'a:1:{' in poc_code or 'O:' in poc_code:
+        parts.append('php_serialized')
+    elif '<?xml' in poc_code:
+        parts.append('xml')
+    elif '0x3c, 0x3f' in poc_code:
+        parts.append('binary_magic')
+    elif 'rule ' in poc_code and 'condition' in poc_code:
+        parts.append('yara_source')
+    else:
+        parts.append('generic')
+
+    return '|'.join(parts)
+
+
 def run_agent(
     cve_entry: dict,
     max_attempts: int = 5,
     few_shot_examples: list = None,
     step_logger=None,
 ) -> AgentResult:
+    # Fix #10: Allow per-task max_attempts override from the dataset entry
+    task_max = cve_entry.get("max_attempts")
+    if task_max is not None:
+        max_attempts = max(max_attempts, int(task_max))
+
     if few_shot_examples is None:
         few_shot_examples = load_few_shot_examples(FEW_SHOT_PATH)
 
@@ -86,6 +128,7 @@ def run_agent(
     last_feedback_text = ""
     last_hallucinated_symbols = []
     seen_poc_hashes: set[str] = set()
+    recent_signatures: list[str] = []  # Fix #9: structural signatures
     consecutive_no_crash = 0
 
     cve_id = cve_entry.get("id") or cve_entry.get("cve_id", "unknown")
@@ -145,6 +188,8 @@ def run_agent(
             )
 
         ctx.add_assistant_message(raw_response)
+        # Fix #8: Summarize older turns to keep context lean
+        ctx.summarize_older_attempts(keep_recent=3)
         ctx.log_context_usage()
 
         # ── CODE EXTRACTION ──────────────────────────────────────────────────
@@ -172,6 +217,10 @@ def run_agent(
                 hallucinated_per_attempt.append([])
                 continue
             seen_poc_hashes.add(poc_hash)
+
+            # Fix #9: Track structural signature for stuck-loop detection
+            sig = _compute_poc_signature(poc_code)
+            recent_signatures.append(sig)
             
         except ExtractionError as e:
             sl.log_extraction(False, error=str(e))
@@ -263,10 +312,21 @@ def run_agent(
         last_feedback_text = result.feedback
         if result.status == "no_crash":
             consecutive_no_crash += 1
-            if consecutive_no_crash >= 3:
+            # Fix #9: Structural similarity check alongside consecutive failure count
+            structurally_stuck = (
+                len(recent_signatures) >= 3
+                and len(set(recent_signatures[-3:])) == 1
+            )
+            if consecutive_no_crash >= 3 or structurally_stuck:
+                approach_desc = ""
+                if structurally_stuck and recent_signatures:
+                    approach_desc = (
+                        f" All recent attempts used the same strategy signature: '{recent_signatures[-1]}'. "
+                    )
                 last_feedback_text = (
                     f"{result.feedback}\n\n"
-                    f"⚠️ WARNING: You have failed to trigger a crash in {consecutive_no_crash} consecutive attempts. "
+                    f"⚠️ WARNING: You have failed to trigger a crash in {consecutive_no_crash} consecutive attempts."
+                    f"{approach_desc}"
                     f"Your current approach or file format is likely incorrect. "
                     f"You MUST completely abandon your current strategy, assumptions, and payload structure. "
                     f"Re-read the target source code carefully. Try a fundamentally different input format, "
