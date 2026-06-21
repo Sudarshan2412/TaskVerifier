@@ -231,6 +231,7 @@ def build_feedback(
             "the vulnerability is triggered during Private DICT parsing, NOT charstring interpretation.\n"
             "7. For binary file formats (CFF, TIFF, DICOM, etc.), state the EXACT byte offset and "
             "encoding of each field. Vague instructions like 'fix the offset' are useless.\n"
+            "8. CRITICAL API LIMIT: Keep your final analysis under 1000 words. Focus strictly on the most important information: the root cause and the exact code changes needed. Do not include unnecessary fluff, or your output will be forcefully truncated and the pipeline will fail.\n"
         )
 
         usr_msg = (
