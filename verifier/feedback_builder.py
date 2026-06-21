@@ -20,7 +20,7 @@ def execute_docker_tool(cmd_type: str, arg: str, image_name: str) -> str:
             filepath = arg.strip()
             print(f"\n[CRITIC] 🛠️  READ {filepath}")
             cmd = ['docker', 'run', '--rm', '--entrypoint', '', image_name,
-                   'sh', '-c', f'cat "{filepath}" 2>/dev/null | head -150']
+                   'sh', '-c', f'cat "{filepath}" 2>/dev/null']
 
         elif cmd_type == "SEARCH":
             query = arg.strip()
