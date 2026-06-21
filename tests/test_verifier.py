@@ -78,3 +78,22 @@ def test_initial_prompt_filters_same_cve_few_shot_example():
     assert "same_cve_example" not in prompt
     assert "Task ID: dataset:example-a" not in prompt
     assert "other_cve_example" in prompt
+
+
+def test_initial_prompt_includes_input_format_and_source_language():
+    cve_entry = {
+        "cve_id": "dataset:source-target",
+        "vuln_class": "use_after_free",
+        "poc_bucket": "short",
+        "sanitizer_type": "asan",
+        "target_source": "void target(void) {}",
+        "crash_description": "AddressSanitizer: heap-use-after-free",
+        "input_format": "source",
+        "input_language": "php",
+    }
+
+    prompt = build_initial_prompt(cve_entry, [])
+
+    assert "The target binary accepts input of type: source" in prompt
+    assert "The input language is: php." in prompt
+    assert "The input must be valid php source code." in prompt

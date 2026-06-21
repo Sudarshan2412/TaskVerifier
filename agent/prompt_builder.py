@@ -81,6 +81,20 @@ def _require_fields(cve_entry: dict, fields: list[str]) -> None:
         raise KeyError(f"cve_entry missing required fields: {missing}")
 
 
+def _input_context(cve_entry: dict) -> str:
+    input_format = cve_entry.get("input_format")
+    input_language = cve_entry.get("input_language")
+    if not input_format:
+        return ""
+
+    lines = [f"The target binary accepts input of type: {input_format}"]
+    if input_language:
+        lines.append(f"The input language is: {input_language}.")
+        if input_format == "source":
+            lines.append(f"The input must be valid {input_language} source code.")
+    return "\n".join(lines) + "\n"
+
+
 def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
     _require_fields(
         cve_entry,
@@ -106,6 +120,7 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
         f"{cve_entry['target_source']}\n"
         "```\n\n"
         f"Expected crash: {cve_entry['crash_description']}\n"
+        f"{_input_context(cve_entry)}"
     )
 
     if few_shot_block:
@@ -135,6 +150,7 @@ def build_feedback_prompt(
     return (
         f"You are continuing to work on CVE {cve_id}.\n"
         f"Target crash: {cve_entry['crash_description']}\n"
+        f"{_input_context(cve_entry)}"
         f"\nYour previous attempt (Attempt {attempt_number}) failed:\n"
         "```c\n"
         f"{previous_poc}\n"
