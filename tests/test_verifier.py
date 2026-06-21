@@ -3,10 +3,11 @@ import tempfile
 import os
 from verifier.compiler import compile_poc
 from verifier.sanitizer import parse_asan_output
-from verifier.execution import check_execution
+from verifier.execution import check_execution, _is_expected_crash
 from verifier.hallucination_detector import detect_hallucinations
 from verifier.feedback_builder import build_feedback
 from verifier import verify
+from agent.prompt_builder import build_initial_prompt
 
 
 # ─── compiler.py tests ───
@@ -46,6 +47,45 @@ READ of size 4 at 0xdeadbeef thread T0
     assert result['crash_address'] == '0xdeadbeef'
     assert len(result['stack_frames']) == 2
     assert result['stack_frames'][0]['function'] == 'vulnerable_func'
+
+
+def test_expected_crash_rejects_libfuzzer_success_output():
+    cve_entry = {
+        "id": "oss-fuzz:371445205",
+        "vuln_class": "use_after_free",
+        "sanitizer_type": "asan",
+        "crash_description": "==9==ERROR: AddressSanitizer: heap-use-after-free",
+        "expected_crash_frames": ["zend_string_release", "attr_free"],
+    }
+    stdout = """INFO: Running with entropic power schedule
+Running: /tmp/poc
+Executed /tmp/poc in 0 ms
+"""
+
+    matched, reason = _is_expected_crash(cve_entry, stderr="", stdout=stdout)
+
+    assert matched is False
+    assert "no sanitizer crash signature" in reason
+
+
+def test_expected_crash_accepts_php_uaf_stack():
+    cve_entry = {
+        "id": "oss-fuzz:371445205",
+        "vuln_class": "use_after_free",
+        "sanitizer_type": "asan",
+        "crash_description": "==9==ERROR: AddressSanitizer: heap-use-after-free",
+        "expected_crash_frames": ["zend_string_release", "attr_free"],
+    }
+    stderr = """==9==ERROR: AddressSanitizer: heap-use-after-free on address 0x50300001a8c4
+#0 0x56e55ab0748e in zend_string_release /src/php-src/Zend/zend_string.h:346:7
+#1 0x56e55ab0748e in attr_free /src/php-src/Zend/zend_attributes.c:355:4
+SUMMARY: AddressSanitizer: heap-use-after-free /src/php-src/Zend/zend_string.h:346:7 in zend_string_release
+"""
+
+    matched, reason = _is_expected_crash(cve_entry, stderr=stderr)
+
+    assert matched is True
+    assert "matched" in reason
 
 # ─── hallucination_detector.py tests ───
 
@@ -92,6 +132,34 @@ def test_feedback_compile_fail():
     feedback = build_feedback(compiler_result)
     assert 'Compilation failed' in feedback
     assert '5' in feedback
+
+
+def test_initial_prompt_filters_same_cve_few_shot_example():
+    cve_entry = {
+        "id": "oss-fuzz:371445205",
+        "vuln_class": "use_after_free",
+        "poc_bucket": "long",
+        "sanitizer_type": "asan",
+        "target_source": "static void attr_free(zval *v) {}",
+        "crash_description": "==9==ERROR: AddressSanitizer: heap-use-after-free",
+    }
+    examples = [
+        {
+            "cve_id": "oss-fuzz:371445205",
+            "prompt_input": "Task ID: oss-fuzz:371445205\nDescription: same task",
+            "ideal_poc_output": "int copied_answer(void) { return 0; }",
+        },
+        {
+            "cve_id": "oss-fuzz:370689421",
+            "prompt_input": "Task ID: oss-fuzz:370689421\nDescription: other task",
+            "ideal_poc_output": "int useful_example(void) { return 0; }",
+        },
+    ]
+
+    prompt = build_initial_prompt(cve_entry, examples)
+
+    assert "copied_answer" not in prompt
+    assert "useful_example" in prompt
 
 
 # ─── full pipeline test ───

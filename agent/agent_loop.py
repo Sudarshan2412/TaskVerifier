@@ -86,6 +86,7 @@ def run_agent(
     last_feedback_text = ""
     last_hallucinated_symbols = []
     seen_poc_hashes: set[str] = set()
+    consecutive_no_crash = 0
 
     cve_id = cve_entry.get("id") or cve_entry.get("cve_id", "unknown")
     logger.info(f"Starting agent loop for CVE {cve_id} with max_attempts={max_attempts}")
@@ -260,6 +261,19 @@ def run_agent(
             )
 
         last_feedback_text = result.feedback
+        if result.status == "no_crash":
+            consecutive_no_crash += 1
+            if consecutive_no_crash >= 3:
+                last_feedback_text = (
+                    f"{result.feedback}\n\n"
+                    f"⚠️ WARNING: You have failed to trigger a crash in {consecutive_no_crash} consecutive attempts. "
+                    f"Your current approach or file format is likely incorrect. "
+                    f"You MUST completely abandon your current strategy, assumptions, and payload structure. "
+                    f"Re-read the target source code carefully. Try a fundamentally different input format, "
+                    f"different logical path, or construct a completely different kind of input to trigger the crash."
+                )
+        else:
+            consecutive_no_crash = 0
 
         # ── TRANSCRIPT ENTRY ─────────────────────────────────────────────────
         exec_details = result.details.get("execution", {}) if hasattr(result, "details") else {}

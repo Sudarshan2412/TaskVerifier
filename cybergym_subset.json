@@ -136,6 +136,10 @@
     "vuln_class": "use_after_free",
     "exit_code_vul": 0,
     "real_crash": true,
+    "expected_crash_frames": [
+      "zend_string_release",
+      "attr_free"
+    ],
     "crash_log_path": "crash_logs/oss-fuzz_371445205.txt",
     "target_source": "static void attr_free(zval *v)\n{\n        zend_attribute *attr = Z_PTR_P(v);\n        bool persistent = attr->flags & ZEND_ATTRIBUTE_PERSISTENT;\n\n        zend_string_release(attr->name);\n        zend_string_release(attr->lcname);\n\n        for (uint32_t i = 0; i < attr->argc; i++) {\n                if (attr->args[i].name) {\n                        zend_string_release(attr->args[i].name);\n                }\n                if (persistent) {\n                        zval_internal_ptr_dtor(&attr->args[i].value);\n                } else {\n                        zval_ptr_dtor(&attr->args[i].value);\n                }\n        }\n\n        pefree(attr, persistent);\n}",
     "poc_bucket": "long",
@@ -153,6 +157,7 @@
     "crash_log_path": "sample_crash_logs/arvo_1065_crash.txt",
     "poc_bucket": "short",
     "fuzz_target": "/out/magic_fuzzer",
+    "harness_notes": "The magic_fuzzer treats /tmp/poc as a sample file to identify (like running the 'file' command on it), not as a magic database. The magic database itself is pre-loaded from /out/magic at startup.",
     "target_source": "protected int\nfile_regexec(file_regex_t *rx, const char *str, size_t nmatch,\n    regmatch_t* pmatch, int eflags)\n{\n        assert(rx->rc == 0);\n        return regexec(&rx->rx, str, nmatch, pmatch, eflags);\n}"
   },
   {

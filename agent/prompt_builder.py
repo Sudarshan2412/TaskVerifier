@@ -111,6 +111,15 @@ def format_few_shot_block(examples: list) -> str:
     return "\n\n".join(formatted_parts)
 
 
+def _example_matches_cve(example: dict, cve_id: str) -> bool:
+    if not cve_id:
+        return False
+    if example.get("cve_id") == cve_id:
+        return True
+    prompt_input = example.get("prompt_input", "")
+    return f"Task ID: {cve_id}" in prompt_input or f"CVE ID: {cve_id}" in prompt_input
+
+
 def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
     """
     Build the initial prompt for the first attempt at generating a PoC.
@@ -140,8 +149,16 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
     target_source = cve_entry["target_source"]
     crash_description = cve_entry["crash_description"]
     
+    filtered_examples = [
+        example for example in few_shot_examples
+        if not _example_matches_cve(example, cve_id)
+    ]
+    skipped_examples = len(few_shot_examples) - len(filtered_examples)
+    if skipped_examples:
+        logger.info("Skipped %d few-shot example(s) matching %s.", skipped_examples, cve_id)
+
     # Format few-shot block
-    few_shot_block = format_few_shot_block(few_shot_examples)
+    few_shot_block = format_few_shot_block(filtered_examples)
     
     # Build the prompt
     prompt = (
@@ -157,6 +174,10 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
         f"```\n\n"
         f"Expected crash: {crash_description}\n"
     )
+    
+    harness_notes = cve_entry.get("harness_notes", "")
+    if harness_notes:
+        prompt += f"Harness notes: {harness_notes}\n\n"
     
     # Add few-shot examples if available
     if few_shot_block:
@@ -245,8 +266,15 @@ def build_feedback_prompt(
     # Build the prompt
     prompt = (
         f"You are continuing to work on CVE {cve_id}.\n"
-        f"Target crash: {crash_description}\n\n"
-        f"Your previous attempt (Attempt {attempt_number}) failed:\n"
+        f"Target crash: {crash_description}\n"
+    )
+    
+    harness_notes = cve_entry.get("harness_notes", "")
+    if harness_notes:
+        prompt += f"Harness notes: {harness_notes}\n"
+        
+    prompt += (
+        f"\nYour previous attempt (Attempt {attempt_number}) failed:\n"
         f"```c\n"
         f"{previous_poc}\n"
         f"```\n\n"

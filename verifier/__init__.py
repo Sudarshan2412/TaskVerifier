@@ -15,11 +15,13 @@ class VerifierResult:
         return f"VerifierResult(status={self.status!r}, feedback={self.feedback[:60]!r}...)"
 
 def _extract_real_asan(stderr: str) -> dict:
-    """Parses actual AddressSanitizer output from Docker's stderr stream."""
+    """Parses actual sanitizer output from Docker's stderr stream."""
     import re
     
-    # Look for the exact ASAN/MSAN error type in the output
-    match = re.search(r'(AddressSanitizer|MemorySanitizer):\s*([^\n\r]+)', stderr)
+    match = re.search(
+        r'(AddressSanitizer|MemorySanitizer|UndefinedBehaviorSanitizer):\s*([^\n\r]+)',
+        stderr or ''
+    )
     
     if match:
         return {
@@ -29,10 +31,18 @@ def _extract_real_asan(stderr: str) -> dict:
             'stack_frames': []
         }
         
+    if 'runtime error:' in (stderr or ''):
+        return {
+            'crashed': True,
+            'crash_type': 'UndefinedBehaviorSanitizer: runtime error',
+            'crash_address': 'See terminal log',
+            'stack_frames': []
+        }
+
     return {
-        'crashed': True, 
-        'crash_type': 'Crash triggered (See terminal for raw ASAN trace)', 
-        'crash_address': 'Unknown', 
+        'crashed': False,
+        'crash_type': 'No sanitizer crash found in stderr',
+        'crash_address': 'Unknown',
         'stack_frames': []
     }
     
@@ -59,6 +69,15 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "") -> Verif
     # 3. Execution check
     exec_result = check_execution(compiler_result['binary_path'], cve_entry)
     details['execution'] = exec_result
+
+    if exec_result.get('harness_broken'):
+        feedback = (
+            f"The execution resulted in a false positive because the fuzzing harness itself is broken.\n"
+            f"The target program crashed on a baseline 1-byte input before even processing the generated PoC.\n"
+            f"Message: {exec_result.get('message')}\n"
+            f"Stderr:\n{exec_result.get('stderr', '')}"
+        )
+        return VerifierResult('false_positive_harness', feedback, details)
 
     # Fast-path: skip the expensive critic for trivial failures
     def _trivial_failure_feedback(execution_result: dict, poc_code: str) -> str | None:
@@ -123,6 +142,13 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "") -> Verif
 
     sanitizer_result = _extract_real_asan(stderr_output)
     details['sanitizer'] = sanitizer_result
+
+    if not sanitizer_result.get('crashed'):
+        feedback = build_feedback(compiler_result, execution_result=exec_result,
+                                  hallucinated_symbols=hallucinated, target_source=target_src,
+                                  image_name=image_name, poc_code=poc_code,
+                                  previous_feedback=previous_feedback, cve_entry=cve_entry)
+        return VerifierResult('no_crash', feedback, details)
 
     feedback = build_feedback(compiler_result, sanitizer_result, exec_result, 
                               hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, cve_entry=cve_entry) # <--- ADDED HERE
