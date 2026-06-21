@@ -71,10 +71,10 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
     MAX_TURNS = 6
     for turn in range(MAX_TURNS):
         print(f"\n[CRITIC] Turn {turn + 1}/{MAX_TURNS}")
-        payload = {"model": model_id, "messages": messages, "max_tokens": 4096}
+        payload = {"model": model_id, "messages": messages, "max_tokens": 16384}
 
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            response = requests.post(url, headers=headers, json=payload, timeout=300)
             response.raise_for_status()
 
             # BUG FIX: handle null content (model put output in reasoning_details)
