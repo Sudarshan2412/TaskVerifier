@@ -7,13 +7,28 @@ STDLIB_NAMES = {
     # C keywords that the symbol regex matches as "function calls"
     'if', 'for', 'while', 'do', 'switch', 'return', 'sizeof', 'typeof',
     'else', 'case', 'break', 'continue', 'goto', 'default',
-    # Standard library functions
+    # Standard library functions — stdio.h
     'main', 'printf', 'malloc', 'free', 'memcpy', 'memset',
     'strlen', 'strcmp', 'strcpy', 'fopen', 'fclose', 'fprintf',
     'exit', 'abort', 'puts', 'sprintf', 'snprintf', 'atoi',
     'calloc', 'realloc', 'memmove', 'NULL', 'stderr', 'stdout', 'stdin',
     'perror', 'fwrite', 'fread', 'fputc', 'fgetc', 'sizeof',
+    'fseek', 'ftell', 'fflush', 'feof', 'ferror', 'fputs', 'fgets',
+    'remove', 'rename', 'tmpfile', 'tmpnam', 'setbuf', 'setvbuf', 'ungetc',
+    # Standard library functions — stdlib.h / string.h / ctype.h
+    'strtol', 'strtoul', 'strtod', 'rand', 'srand', 'time',
+    'qsort', 'bsearch', 'abs', 'labs', 'getenv', 'system',
+    'memcmp', 'memchr', 'strncpy', 'strncmp', 'strcat', 'strncat',
+    'strstr', 'strchr', 'strrchr', 'strtok', 'strerror',
+    'isalpha', 'isdigit', 'isalnum', 'isspace', 'toupper', 'tolower',
+    # Network byte-order helpers (arpa/inet.h)
+    'htons', 'htonl', 'ntohs', 'ntohl',
+    # assert.h
+    'assert',
+    # Standard headers
     'stdio.h', 'stdlib.h', 'string.h', 'stdint.h', 'stddef.h',
+    'assert.h', 'ctype.h', 'math.h', 'limits.h', 'errno.h',
+    'unistd.h', 'fcntl.h', 'sys/types.h',
 }
 
 

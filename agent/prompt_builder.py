@@ -211,6 +211,23 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
                 f"study the source for integer bounds and craft the directive accordingly. "
                 f"Example structure: .file <number> \"name.c\" or .loc <number> <line> <col>\n"
             )
+        elif "tiff" in fuzz_target.lower():
+            prompt += (
+                "\n\nThe fuzz target expects a TIFF image. Ensure you produce a valid TIFF header "
+                "and properly structure the Image File Directories (IFD). Use small image dimensions "
+                "to avoid timeouts, but NOT 0x0, which may be rejected."
+            )
+        elif "ftfuzzer" in fuzz_target or "cff" in fuzz_target.lower():
+            prompt += (
+                "\n\nThe fuzz target processes CFF font data. "
+                "CFF INDEX structures use a 2-byte big-endian count (uint16), NOT a single byte. "
+                "The Name INDEX MUST contain at least one name (count >= 1). "
+                "DICT operands use special integer encoding: single byte b in [32,246] = (b-139). "
+                "So to push 0 use 0x8B, to push 1 use 0x8C, to push 6 use 0x91. "
+                "Use 0x1C prefix for 2-byte big-endian int16 values. "
+                "The Private operator (18) takes: <size> <offset> 18 (offset from CFF start). "
+                "Use ftell() to compute correct offsets dynamically.\n"
+            )
         elif any(x in target_name for x in ["heif", "libheif", "file-fuzzer"]):
             prompt += (
                 f"\n\nThe fuzz target processes HEIF/ISO Base Media files. "

@@ -26,7 +26,7 @@ def execute_docker_tool(cmd_type: str, arg: str, image_name: str) -> str:
             query = arg.strip()
             print(f"\n[CRITIC] 🛠️  SEARCH {query!r}")
             cmd = ['docker', 'run', '--rm', '--entrypoint', '', image_name,
-                   'sh', '-c', f'grep -rn "{query}" /src/ /work/include/ 2>/dev/null | head -20']
+                   'sh', '-c', f'grep -rn "{query}" /src/ /work/include/ 2>/dev/null | head -50']
 
         else:
             return "Error: Unknown command."
@@ -71,7 +71,7 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
     MAX_TURNS = 6
     for turn in range(MAX_TURNS):
         print(f"\n[CRITIC] Turn {turn + 1}/{MAX_TURNS}")
-        payload = {"model": model_id, "messages": messages, "max_tokens": 2048}
+        payload = {"model": model_id, "messages": messages, "max_tokens": 4096}
 
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=60)
@@ -206,9 +206,6 @@ def build_feedback(
         return f"Compilation failed.\nSenior Engineer Analysis:\n{analysis}"
 
     # ── Path C: execution ran but no crash ────────────────────────────────────
-    # BUG FIX: removed the dead constants_found block that was here between
-    # Path B's return and Path C — it was unreachable code with a NameError
-    # on `usr_msg` that would crash if somehow executed.
 
     if execution_result and not execution_result.get('triggered'):
         fuzzer_output = execution_result.get('stderr', '').strip()
@@ -230,6 +227,10 @@ def build_feedback(
             "4. Do NOT contradict a previous analysis unless you have new tool evidence.\n"
             "5. If a previous analysis identified the correct file format or attack vector, "
             "preserve that finding — only revise it if tool output proves it wrong.\n"
+            "6. ALWAYS check the crash trace call stack. If it says 'cff_load_private_dict', "
+            "the vulnerability is triggered during Private DICT parsing, NOT charstring interpretation.\n"
+            "7. For binary file formats (CFF, TIFF, DICOM, etc.), state the EXACT byte offset and "
+            "encoding of each field. Vague instructions like 'fix the offset' are useless.\n"
         )
 
         usr_msg = (
