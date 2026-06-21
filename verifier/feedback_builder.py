@@ -77,10 +77,14 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
             response = requests.post(url, headers=headers, json=payload, timeout=300)
             response.raise_for_status()
 
+            resp_json = response.json()
+            choice = resp_json['choices'][0]
+            finish_reason = choice.get('finish_reason')
+
             # BUG FIX: handle null content (model put output in reasoning_details)
-            content = response.json()['choices'][0]['message']['content']
+            content = choice['message']['content']
             if content is None:
-                reasoning = response.json()['choices'][0]['message'].get('reasoning_details', [])
+                reasoning = choice['message'].get('reasoning_details', [])
                 text = ' '.join(
                     r.get('text', '') for r in reasoning
                     if r.get('type') == 'reasoning.text'
@@ -89,6 +93,17 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
                     return "Critic LLM returned empty response. Please retry with a different approach."
             else:
                 text = content.strip()
+
+            if finish_reason == 'length':
+                print(f"[CRITIC] ⚠️ API response truncated (length limit). Sending recovery prompt...")
+                messages.append({"role": "assistant", "content": text})
+                messages.append({
+                    "role": "user", 
+                    "content": "[SYSTEM CRITICAL: Your previous response was cut off because you reached the maximum API length limit. You MUST output ONLY the exact root cause and the required code fixes immediately. Do NOT use any internal thinking or reasoning, just state the solution.]"
+                })
+                if turn == MAX_TURNS - 1:
+                    return text + "\n[System: Final turn output truncated due to API limit.]"
+                continue
 
             # Force return on final turn
             if turn == MAX_TURNS - 1:
