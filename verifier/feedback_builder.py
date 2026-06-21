@@ -3,6 +3,11 @@ import re
 import requests
 import subprocess
 
+
+# Cache resolved constants per (image, source) pair so we don't re-grep
+# the container on every retry attempt for the same CVE.
+_constants_cache: dict[str, dict] = {}
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. Text-based Docker Executor
 # ──────────────────────────────────────────────────────────────────────────────
@@ -105,26 +110,29 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
             elif "SEARCH:" in text:
                 raw_query = text.split("SEARCH:")[1].split("\n")[0].strip()
 
-                # Sanitise malformed queries from the LLM
-                raw_query = raw_query.strip('"\'')
-                raw_query = re.sub(r'\s+(in\s+)?/\S+.*$', '', raw_query).strip()
-                if any(x in raw_query for x in ['-exec', 'find ', '-name', '-type']):
-                    m = re.search(r'"([^"]+)"', raw_query)
-                    raw_query = m.group(1) if m else "MaxTextExtent"
+                # Clean up the query: strip quotes and trailing paths
+                query = raw_query.strip('"\'')
+                query = re.sub(r'\s+(in\s+)?/\S+.*$', '', query).strip()
 
-                query = raw_query
+                # If LLM hallucinates a bash 'find' command, extract the quoted target
+                if "find " in query or "-name" in query:
+                    m = re.search(r'"([^"]+)"', query)
+                    if m:
+                        query = m.group(1)
+
                 print(f"[CRITIC] → Tool: SEARCH {query!r}")
                 tool_result = execute_docker_tool("SEARCH", query, image_name)
                 messages.append({"role": "assistant", "content": text})
 
                 if not tool_result or "Command executed but returned no output" in tool_result:
-                    words = [w for w in query.split() if w.isidentifier()]
+                    # Generic fallback: Extract the longest alphanumeric word from the query
+                    words = [w for w in query.replace('_', ' ').split() if w.isalnum()]
                     if words:
-                        fallback = words[0]
+                        fallback = max(words, key=len)
                         tool_result = execute_docker_tool("SEARCH", fallback, image_name)
                         next_prompt = f"First query returned nothing. Retried with '{fallback}':\nTOOL OUTPUT:\n{tool_result}"
                     else:
-                        next_prompt = "TOOL OUTPUT:\nNo results. Try: SEARCH: MaxTextExtent"
+                        next_prompt = "TOOL OUTPUT:\nNo results. Try a simpler, single-word SEARCH query."
                 else:
                     next_prompt = (
                         f"TOOL OUTPUT:\n{tool_result}\n\n"
@@ -167,6 +175,10 @@ def build_feedback(
 ) -> str:
     if image_name is None:
         image_name = "cybergym-sandbox:latest"
+    no_real_image = (image_name == "cybergym-sandbox:latest")
+    if no_real_image:
+        print("[WARN] No real docker_image_vul provided — tool calls will fail. "
+              "Skipping constant pre-resolution.")
     if cve_entry is None:
         cve_entry = {}
 
@@ -206,11 +218,10 @@ def build_feedback(
         sys_msg = (
             "You are a Senior Security Engineer investigating why a PoC exploit failed. "
             "You have access to a terminal in the target Docker container.\n\n"
-            "MANDATORY FIRST STEP: Before any analysis, you MUST search for compile-time "
-            "constants used in the target source. If the source uses any constant like "
-            "MaxTextExtent, BUFSIZ, PATH_MAX, or similar — search for its exact value FIRST. "
-            "Do not proceed with analysis until you have confirmed the value.\n\n"
-            "To search: SEARCH: #define MaxTextExtent\n"
+            "MANDATORY FIRST STEP: Before any analysis, you MUST search the target source "
+            "for the exact function definitions, struct sizes, or constants involved in parsing "
+            "the input. Do not proceed with analysis until you have confirmed the context.\n\n"
+            "To search: SEARCH: <keyword>\n"
             "To read a file: READ: /absolute/path/to/file.c\n\n"
             "RULES:\n"
             "1. ONE command per turn.\n"
@@ -246,9 +257,6 @@ def build_feedback(
                 f"If your tool results contradict this, trust the tools.\n\n"
             )
 
-        if "MaxTextExtent" in target_source:
-            usr_msg += "\nNOTE: MaxTextExtent appears in this code. SEARCH for its exact value before advising on buffer sizes."
-
         if hallucinated_symbols:
             syms = ', '.join(hallucinated_symbols[:5])
             usr_msg += f"\nNote: The agent hallucinated these symbols: {syms}."
@@ -262,13 +270,22 @@ def build_feedback(
             )
 
         # Pre-resolve constants from the target source (correct location — usr_msg is defined)
-        constants_found = {}
-        for match in re.finditer(r'\b([A-Z][A-Z_]{3,}[A-Z])\b', target_source):
-            name = match.group(1)
-            if name not in constants_found:
+        cache_key = f"{image_name}:{hash(target_source)}"
+        if cache_key in _constants_cache:
+            constants_found = _constants_cache[cache_key]
+            print(f"[DEBUG] Using cached constants ({len(constants_found)} entries)")
+        elif no_real_image:
+            constants_found = {}
+        else:
+            constants_found = {}
+            unique_names = list(dict.fromkeys(
+                m.group(1) for m in re.finditer(r'\b([A-Z][A-Z_]{3,}[A-Z])\b', target_source)
+            ))
+            for name in unique_names[:8]:  # cap to avoid runaway Docker calls — see Fix 3
                 result = execute_docker_tool("SEARCH", f"#define {name}", image_name)
                 if result and "returned no output" not in result and "Tool execution failed" not in result:
                     constants_found[name] = result[:300]
+            _constants_cache[cache_key] = constants_found
 
         if constants_found:
             const_block = "\n".join(f"  {k}: {v.strip()[:100]}" for k, v in constants_found.items())

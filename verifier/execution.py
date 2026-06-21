@@ -44,21 +44,23 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
     # ── Step 2: Run the vulnerable target inside Docker ───────────────────────
     docker_cmd = [
         'docker', 'run', '--rm',
-        '--network', 'none',           # no outbound network
-        '--cap-drop', 'ALL',           # drop all Linux capabilities
+        '--network', 'none',
+        '--cap-drop', 'ALL',
         '--security-opt', 'no-new-privileges',
-        '--memory', '256m',            # cap at 256 MB RAM
-        '--cpus', '0.5',               # cap at half a CPU core
-        '--pids-limit', '64',          # prevent fork bombs
-        '--read-only',                 # read-only root filesystem
-        '--tmpfs', '/tmp:size=32m',    # writable /tmp capped at 32 MB
-        '-v', '/tmp/poc:/tmp/poc:ro',  # mount PoC read-only into container
-        '-e', 'ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:abort_on_error=1:exitcode=77',
+        '--memory', '256m',
+        '--cpus', '0.5',
+        '--pids-limit', '64',
+        '--read-only',
+        '--tmpfs', '/tmp:size=32m',
+        '-v', "/tmp/poc:/tmp/poc:ro",
+        '-e', 'ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:abort_on_error=1:exitcode=77:allocator_may_return_null=1',
         '-e', 'MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exitcode=77',
         '-e', 'UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exitcode=77',
         image_name,
-        fuzz_target, '/tmp/poc'
+        fuzz_target,
+        '/tmp/poc'
     ]
+
     docker_cmd_str = ' '.join(docker_cmd)
     print(f"[EXEC] Running: {docker_cmd_str}")
 
@@ -67,24 +69,42 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
         exit_code = run_result.returncode
         print(f"[EXEC] Exit code: {exit_code} (expected crash exit: {expected_crash_exit_code})")
 
-        # Catch Docker infrastructure errors before declaring a crash
-        stderr_lower = run_result.stderr.lower()
-        if "oci runtime create failed" in stderr_lower or (
-            "no such file or directory" in stderr_lower and "exec:" in stderr_lower
-        ):
+        # Catch OS Out-Of-Memory Kills (137)
+        if exit_code == 137:
             return {
                 'triggered': False,
                 'exit_code': exit_code,
                 'message': (
-                    f'INFRASTRUCTURE ERROR: Docker failed to start the fuzzer. '
-                    f'Check that {fuzz_target} exists in image {image_name}.'
+                    'INFRASTRUCTURE ERROR: The Docker container was killed by the OS (OOM Killer). '
+                    'Your PoC attempted to allocate too much memory at once. Because the container '
+                    'is limited to 256MB of RAM, you MUST craft your integer overflow such that it '
+                    'wraps around to a SMALL number (e.g., allocating 100 bytes but reading 4000), '
+                    'rather than allocating 4 Gigabytes.'
                 ),
                 'stderr': run_result.stderr,
                 'stdout': run_result.stdout,
                 'fuzzer_cmd': docker_cmd_str,
             }
 
-        # --- THE NEW STRICT CRASH DETECTION ---
+        # Catch Docker infrastructure errors
+        stderr_lower = run_result.stderr.lower()
+        if exit_code == 125 or "oci runtime create failed" in stderr_lower or (
+            "no such file or directory" in stderr_lower and "exec" in stderr_lower
+        ):
+            return {
+                'triggered': False,
+                'exit_code': exit_code,
+                'message': (
+                    f'INFRASTRUCTURE ERROR: Docker failed to start or execute a dependency. '
+                    f'If the target binary attempted to shell out to an external program, '
+                    f'you must either bypass that code path or the environment is broken.'
+                ),
+                'stderr': run_result.stderr,
+                'stdout': run_result.stdout,
+                'fuzzer_cmd': docker_cmd_str,
+            }
+
+        # --- THE STRICT CRASH DETECTION ---
         # 1. Check for our explicit sanitizer code (77) or raw fatal signals (139=Segfault, 134=Abort)
         crashed = exit_code in [77, 139, 134]
 
@@ -108,7 +128,7 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
             print(f"[EXEC] ✗ False positive averted: Exit code {exit_code} but empty stderr.")
             crashed = False
 
-        # --- THE MISSING RETURN BLOCK ---
+        # --- THE REQUIRED RETURN BLOCK ---
         if crashed:
             print(f"[EXEC] ✓ CRASH detected!")
             return {

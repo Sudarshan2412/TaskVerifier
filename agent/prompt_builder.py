@@ -229,7 +229,12 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
     # Add final instruction
     prompt += (
         f"\nWrite a PoC C program that, when compiled with -fsanitize=address and executed,\n"
-        "\n\nCRITICAL OUTPUT CONSTRAINTS:\n"
+        "\n\nCRITICAL OUTPUT & ENVIRONMENT CONSTRAINTS:\n"
+        "- TARGET ARCHITECTURE: The target is a 64-bit Linux container. Pointers and size_t are 64-bit.\n"
+        "- INTEGER OVERFLOWS & OOM: The container has strictly 256MB of RAM. Massive allocations (e.g., 4GB) will cause silent OOM kills. "
+        "If triggering an integer overflow, rely on C promotion rules (e.g., 16-bit values multiplied together overflow a 32-bit intermediate register BEFORE casting to size_t). "
+        "You MUST choose inputs whose 32-bit product wraps to a SMALL POSITIVE NUMBER (e.g., 256 to 1024). "
+        "DO NOT set base dimensions to exactly 0, as parsers safely reject 0-dimension images.\n"
         "- Do NOT write the payload as a hex byte array literal (unsigned char poc[] = {0x41, ...}).\n"
         "  These arrays are too long and will be truncated. You will run out of tokens.\n"
         "- Instead, write the payload using a loop or fprintf/fputc calls.\n"
@@ -237,7 +242,6 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
     )
 
     return prompt
-
 
 def build_feedback_prompt(
     cve_entry: dict,
@@ -298,6 +302,7 @@ def build_feedback_prompt(
         )
         prompt += hallucination_section
     fuzz_target = cve_entry.get("fuzz_target", "")
+    
     if fuzz_target and any(fmt in fuzz_target.upper() for fmt in ["MVG", "SVG", "PS", "PDF", "JPEG", "PNG"]):
         prompt += (
             f"\nREMINDER: Use fputc('%', f) not fprintf(f, \"%%[\") to write a literal "
@@ -306,7 +311,12 @@ def build_feedback_prompt(
     # Add final instruction
     prompt += (
         f"\nFix the PoC. Output ONLY the corrected C code inside triple backticks. No explanation."
-        "\n\nCRITICAL OUTPUT CONSTRAINTS:\n"
+        "\n\nCRITICAL OUTPUT & ENVIRONMENT CONSTRAINTS:\n"
+        "- TARGET ARCHITECTURE: The target is a 64-bit Linux container. Pointers and size_t are 64-bit.\n"
+        "- INTEGER OVERFLOWS & OOM: The container has strictly 256MB of RAM. Massive allocations (e.g., 4GB) will cause silent OOM kills. "
+        "If triggering an integer overflow, rely on C promotion rules (e.g., 16-bit values multiplied together overflow a 32-bit intermediate register BEFORE casting to size_t). "
+        "You MUST choose inputs whose 32-bit product wraps to a SMALL POSITIVE NUMBER (e.g., 256 to 1024). "
+        "DO NOT set base dimensions to exactly 0, as parsers safely reject 0-dimension images.\n"
         "- Do NOT write the payload as a hex byte array literal (unsigned char poc[] = {0x41, ...}).\n"
         "  These arrays are too long and will be truncated. You will run out of tokens.\n"
         "- Instead, write the payload using a loop or fprintf/fputc calls.\n"
