@@ -50,6 +50,22 @@ def test_accepts_sanitizer_error_with_matching_vulnerability_class():
     )
 
 
+def test_accepts_heap_double_free_vulnerability_class_alias():
+    cve_entry = {
+        "vuln_class": "heap-double-free",
+    }
+    stderr = "==1==ERROR: AddressSanitizer: attempting double-free"
+
+    result = classify_execution(exit_code=1, stderr=stderr, cve_entry=cve_entry)
+
+    assert result["triggered"] is True
+    assert result["sanitizer"]["sanitizer"] == "ASAN"
+    assert result["sanitizer"]["error_type"] == "attempting double-free"
+    assert result["message"] == (
+        "The PoC triggered a sanitizer error consistent with heap-double-free."
+    )
+
+
 def test_initial_prompt_filters_same_cve_few_shot_example():
     cve_entry = {
         "cve_id": "dataset:example-a",

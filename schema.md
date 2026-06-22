@@ -10,7 +10,7 @@
 | `sanitizer_type` | string | `asan` or `ubsan` |
 | `poc_length_bucket` | string | `short` (<50B), `medium` (50–100B), `long` (>100B) |
 | `poc_length_bytes` | int | Actual PoC size in bytes |
-| `vuln_class` | string | `buffer_overflow`, `use_after_free`, `integer_overflow`, `null_deref`, `other` |
+| `vuln_class` | string | `buffer_overflow`, `use_after_free`, `integer_overflow`, `null_deref`, `double_free`, `heap-double-free`, `other` |
 | `exit_code_vul` | int | Exit code when reference PoC is run on -vul image (non-zero = crash) |
 | `crash_log_path` | string | Path to saved crash log file in `crash_logs/` |
 

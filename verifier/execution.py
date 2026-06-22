@@ -16,6 +16,20 @@ VULN_CLASS_ERROR_TYPES = {
     "undefined_behavior": {"undefined-behavior", "runtime error"},
 }
 
+VULN_CLASS_ALIASES = {
+    "use-after-free": "use_after_free",
+    "double-free": "double_free",
+    "heap-double-free": "double_free",
+    "null-deref": "null_deref",
+    "heap-buffer-overflow": "heap_buffer_overflow",
+    "stack-buffer-overflow": "stack_buffer_overflow",
+    "buffer-overflow": "buffer_overflow",
+    "uninitialized-memory": "uninitialized_memory",
+    "uninitialized-value": "uninitialized_value",
+    "memory-leak": "memory_leak",
+    "undefined-behavior": "undefined_behavior",
+}
+
 SANITIZER_LABELS = {
     "AddressSanitizer": "ASAN",
     "MemorySanitizer": "MSAN",
@@ -87,8 +101,15 @@ def _normalize_error_type(raw_error: str) -> str:
     return text.split()[0].rstrip(":")
 
 
+def _normalize_vuln_class(vuln_class: str) -> str:
+    normalized = (vuln_class or "").strip().lower()
+    normalized = VULN_CLASS_ALIASES.get(normalized, normalized)
+    return normalized.replace("-", "_")
+
+
 def sanitizer_error_matches_vuln_class(error_type: str, vuln_class: str) -> bool:
-    expected_types = VULN_CLASS_ERROR_TYPES.get((vuln_class or "").lower(), set())
+    normalized = _normalize_vuln_class(vuln_class)
+    expected_types = VULN_CLASS_ERROR_TYPES.get(normalized, set())
     if not expected_types:
         return False
 
