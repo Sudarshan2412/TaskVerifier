@@ -18,6 +18,7 @@ from agent.prompt_builder import (
 )
 from agent.code_extractor import extract_code, ExtractionError
 from agent.context_manager import ContextManager
+from agent.fact_accumulator import FactAccumulator
 from verifier import VerifierPipeline
 from verifier.hallucination_detector import detect_hallucinations
 
@@ -86,6 +87,7 @@ def run_agent(
     last_feedback_text = ""
     last_hallucinated_symbols = []
     seen_poc_hashes: set[str] = set()
+    fact_acc = FactAccumulator()  # accumulates confirmed facts across all retry attempts
 
     cve_id = cve_entry.get("id") or cve_entry.get("cve_id", "unknown")
     logger.info(f"Starting agent loop for CVE {cve_id} with max_attempts={max_attempts}")
@@ -105,7 +107,8 @@ def run_agent(
                     feedback_text=last_feedback_text,
                     hallucinated_symbols=last_hallucinated_symbols,
                     previous_poc=last_poc,
-                    attempt_number=attempt - 1
+                    attempt_number=attempt - 1,
+                    confirmed_facts=fact_acc.render(),
                 )
                 sl.log_prompt_built("feedback", len(prompt))
                 # NEW: log what feedback is being sent so you can follow the loop
@@ -277,6 +280,11 @@ def run_agent(
             )
         else:
             last_feedback_text = result.feedback
+
+        # ── FACT ACCUMULATION ─────────────────────────────────────────────────
+        # Extract any confirmed constants, offsets, or operator codes the critic
+        # discovered this round and carry them into the next retry prompt.
+        fact_acc.update(last_feedback_text)
 
         # ── TRANSCRIPT ENTRY ─────────────────────────────────────────────────
         exec_details = result.details.get("execution", {}) if hasattr(result, "details") else {}

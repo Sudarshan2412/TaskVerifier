@@ -10,7 +10,8 @@ import json
 import logging
 import os
 from pathlib import Path
-from agent.source_extractor import extract_source_from_container   # ADD THIS
+from agent.source_extractor import extract_source_from_container
+from agent.format_hints import get_format_hint
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
@@ -151,7 +152,6 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
         f"CVE ID: {cve_id}\n"
         f"Vulnerability class: {vuln_class}\n"
         f"Sanitizer: {sanitizer_type.upper()}\n"
-        f"Expected PoC size: {poc_bucket} (< 50 bytes / 50–100 bytes / > 100 bytes)\n\n"
         f"--- Vulnerable Source ---\n"
         f"```c\n"
         f"{target_source}\n"
@@ -169,79 +169,24 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
     if few_shot_block:
         prompt += f"\n{few_shot_block}\n"
     
-    hint = cve_entry.get("hint", "")
-    if hint:
-        hint += (
-            "\nIMPORTANT: In MVG, text strings must use single quotes: text 0,0 '%[...]' "
-            "NOT double quotes. Double-quoted strings are parsed differently."
-        )
-        prompt += f"\n\nIMPORTANT HINT:\n{hint}"
-    
-    fuzz_target = cve_entry.get("fuzz_target", "")
-    hint = cve_entry.get("hint", "")
-    target_name = fuzz_target.split("/")[-1].lower() if fuzz_target else ""
+    #NOTE: the 'hint' field is INTENTIONALLY NOT injected.
++   # It contains human-authored PoC solutions and would contaminate the benchmark.
++   # It remains in the dataset for developer debugging only.
++   # To run a hint-assisted ablation, set TASKVERIFIER_ALLOW_HINTS=1.
++   if os.environ.get("TASKVERIFIER_ALLOW_HINTS") == "1":
++       hint = cve_entry.get("hint", "")
++       if hint:
++           prompt += f"\n\nHINT (ablation mode only — not valid benchmark run):\n{hint}"
 
-    if fuzz_target and any(fmt in fuzz_target.upper() for fmt in ["MVG", "SVG", "PS", "PDF", "JPEG", "PNG"]):
-        prompt += (
-            f"\n\nThe fuzz target binary is: {fuzz_target}\n"
-            f"The input file must be a valid {fuzz_target.split('/')[-1].replace('coder_','').replace('_fuzzer','')} format file.\n"
-            f"\nCRITICAL C WRITING RULE — to write a literal '%' character to a file:\n"
-            f"  CORRECT:   fputc('%', f);\n"
-            f"  WRONG:     fprintf(f, \"%%\");   // TranslateTextEx sees %% as escaped percent,\n"
-            f"             // so escape sequences like %[ are NEVER triggered.\n"
-            f"\nFor MVG format specifically, use this exact C pattern:\n"
-            f"```c\n"
-            f"fprintf(f, \"push graphic-context\\n\");\n"
-            f"fprintf(f, \"text 0,0 '\");\n"
-            f"fputc('%', f);   // literal percent\n"
-            f"fputc('[', f);\n"
-            f"for (int i = 0; i < N; i++) fputc('A', f);  // N >= MaxTextExtent\n"
-            f"fprintf(f, \"]'\\n\");\n"
-            f"fprintf(f, \"pop graphic-context\\n\");\n"
-            f"```\n"
-        )
-    elif not hint:
-        # General-purpose format hints derived from the fuzz target name.
-        # Add new branches here as you encounter new target types.
-        if any(x in target_name for x in ["fuzz_as", "assembl"]):
-            prompt += (
-                f"\n\nThe fuzz target is a GNU assembler (as). "
-                f"Your PoC must write a plain text assembly file to /tmp/poc. "
-                f"The vulnerability is triggered by specific directive values — "
-                f"study the source for integer bounds and craft the directive accordingly. "
-                f"Example structure: .file <number> \"name.c\" or .loc <number> <line> <col>\n"
-            )
-        elif "tiff" in fuzz_target.lower():
-            prompt += (
-                "\n\nThe fuzz target expects a TIFF image. Ensure you produce a valid TIFF header "
-                "and properly structure the Image File Directories (IFD). Use small image dimensions "
-                "to avoid timeouts, but NOT 0x0, which may be rejected."
-            )
-        elif "ftfuzzer" in fuzz_target or "cff" in fuzz_target.lower():
-            prompt += (
-                "\n\nThe fuzz target processes CFF font data. "
-                "CFF INDEX structures use a 2-byte big-endian count (uint16), NOT a single byte. "
-                "The Name INDEX MUST contain at least one name (count >= 1). "
-                "DICT operands use special integer encoding: single byte b in [32,246] = (b-139). "
-                "So to push 0 use 0x8B, to push 1 use 0x8C, to push 6 use 0x91. "
-                "Use 0x1C prefix for 2-byte big-endian int16 values. "
-                "The Private operator (18) takes: <size> <offset> 18 (offset from CFF start). "
-                "Use ftell() to compute correct offsets dynamically.\n"
-            )
-        elif any(x in target_name for x in ["heif", "libheif", "file-fuzzer"]):
-            prompt += (
-                f"\n\nThe fuzz target processes HEIF/ISO Base Media files. "
-                f"Your PoC must write a valid binary HEIF container to /tmp/poc. "
-                f"Focus on image dimension fields (width, height, stride) — "
-                f"the overflow is triggered when computed buffer sizes exceed allocated memory.\n"
-            )
-        elif any(x in target_name for x in ["mng", "png"]):
-            prompt += (
-                f"\n\nThe fuzz target processes MNG/PNG files. "
-                f"Your PoC must write a valid binary MNG/PNG file to /tmp/poc. "
-                f"CRC values in chunk headers are typically ignored by the parser — "
-                f"you can use dummy zeros. Focus on chunk type and data layout.\n"
-            )
+    fuzz_target = cve_entry.get("fuzz_target", "")
+
+    # Format hint — looked up from the registry (agent/format_hints.py).
+    # To add support for a new file format, add an entry there; do NOT add
+    # branches here.
+    if fuzz_target:
+        format_hint = get_format_hint(fuzz_target, retry=False)
+        if format_hint:
+            prompt += f"\n\nFORMAT GUIDANCE (fuzz target: {fuzz_target}):\n{format_hint}"
 
     # Add final instruction
     prompt += (
@@ -265,7 +210,8 @@ def build_feedback_prompt(
     feedback_text: str,
     hallucinated_symbols: list,
     previous_poc: str,
-    attempt_number: int
+    attempt_number: int,
+    confirmed_facts: str = "",
 ) -> str:
     """
     Build a retry prompt after a previous attempt failed.
@@ -276,6 +222,8 @@ def build_feedback_prompt(
         hallucinated_symbols: List of symbol names that don't exist in the source
         previous_poc: The C code from the previous attempt
         attempt_number: Which attempt this is (1-indexed)
+        confirmed_facts: Pre-rendered "CONFIRMED FACTS" block from FactAccumulator.
+                         Injected at the top of the prompt when non-empty.
         
     Returns:
         Formatted retry prompt string
@@ -296,9 +244,16 @@ def build_feedback_prompt(
     # Extract fields
     cve_id = cve_entry.get("id") or cve_entry.get("cve_id", "unknown")
     crash_description = cve_entry["crash_description"]
-    
-    # Build the prompt
-    prompt = (
+    fuzz_target = cve_entry.get("fuzz_target", "")
+
+    # ── Confirmed facts block (from FactAccumulator) ─────────────────────
+    # Injected first so it anchors the LLM before it reads any analysis.
+    prompt = ""
+    if confirmed_facts:
+        prompt += f"{confirmed_facts}\n"
+
+    # ── Core retry context ────────────────────────────────────────────────
+    prompt += (
         f"You are continuing to work on CVE {cve_id}.\n"
         f"Target crash: {crash_description}\n\n"
         f"Your previous attempt (Attempt {attempt_number}) failed:\n"
@@ -309,7 +264,7 @@ def build_feedback_prompt(
         f"{feedback_text}\n"
     )
     
-    # Add hallucination section if hallucinated_symbols is non-empty
+    # ── Hallucinated symbols ──────────────────────────────────────────────
     if hallucinated_symbols:
         hallucination_section = (
             f"\nWARNING — Hallucinated symbols detected:\n"
@@ -318,14 +273,32 @@ def build_feedback_prompt(
             f"Only use functions, variables, and headers that appear in the provided source code.\n"
         )
         prompt += hallucination_section
-    fuzz_target = cve_entry.get("fuzz_target", "")
-    
-    if fuzz_target and any(fmt in fuzz_target.upper() for fmt in ["MVG", "SVG", "PS", "PDF", "JPEG", "PNG"]):
-        prompt += (
-            f"\nREMINDER: Use fputc('%', f) not fprintf(f, \"%%[\") to write a literal "
-            f"percent sign. The %% escape prevents the vulnerable code path from being reached.\n"
-        )
-    # Add final instruction
+
+    # ── Format hint (retry variant) ───────────────────────────────────────
+    # Looked up from the same registry used by build_initial_prompt, so hints
+    # are NEVER silently dropped on retry.  The retry variant is shorter to
+    # save tokens; it reinforces the most common structural mistake for the
+    # given file format.
+    if fuzz_target:
+        retry_hint = get_format_hint(fuzz_target, retry=True)
+        if retry_hint:
+            prompt += f"\n{retry_hint}"
+
+    # ── Mandatory analysis gate ───────────────────────────────────────────
+    # Forces the generator LLM to reason about WHY the previous attempt failed
+    # before producing new code.  This is format-agnostic and applies to every
+    # retry regardless of vulnerability class.
+    prompt += (
+        "\n=== ANALYSIS REQUIRED BEFORE CODE ===\n"
+        "Before writing any C code, write one short paragraph that answers:\n"
+        "  1. Exactly why the previous payload did NOT trigger the crash.\n"
+        "  2. What specific change you are making and why it will fix the problem.\n"
+        "Do NOT skip this analysis.  Do NOT just restate the verifier feedback.\n"
+        "Write your analysis, then output the corrected C code.\n"
+        "======================================\n"
+    )
+
+    # ── Final instruction ─────────────────────────────────────────────────
     prompt += (
         f"\nFix the PoC. Output ONLY the corrected C code inside triple backticks. No explanation."
         "\n\nCRITICAL OUTPUT & ENVIRONMENT CONSTRAINTS:\n"

