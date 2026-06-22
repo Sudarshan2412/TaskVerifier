@@ -263,9 +263,11 @@ def build_feedback(
             "9. AVOID CYCLES: You will be provided with a history of failed approaches. Do NOT suggest a strategy that has already failed. If two formats/approaches both fail, do not toggle between them. Instead, use SEARCH to find the correct structural requirements to make the original approach work.\n"
             "10. DO NOT GUESS OPCODES: If the failure involves an unrecognized operator, instruction, or token, DO NOT guess its byte value. You MUST use SEARCH to locate the exact opcode definitions in the target's source code (e.g., looking in header files or token tables) to verify the correct byte sequence.\n"
             "11. Trace execution backwards from the vulnerable function. Identify exactly which struct sizes, bounds checks (e.g., dataCount > 0), or stack limits (e.g., maxstack) must be satisfied to reach it.\n"
+            "12. The Vulnerability Description is GROUND TRUTH. Do not invent alternative code paths or assert that the vulnerability occurs elsewhere (e.g., during glyph loading instead of parsing). Your job is strictly to figure out why the PoC failed to reach the specific path described.\n"
         )
 
         usr_msg = (
+            f"Vulnerability Description (Target):\n{cve_entry.get('description', 'Unknown')}\n\n"
             f"The agent generated a payload to /tmp/poc, but the target binary rejected it and did not crash.\n\n"
             f"CRITICAL: The generator program MUST write its output to exactly '/tmp/poc' (no extension).\n\n"
             f"Target Source Code:\n{target_source}\n\n"
