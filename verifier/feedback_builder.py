@@ -159,6 +159,12 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
                 continue
 
             else:
+                if turn == 0:
+                    print(f"[CRITIC] → Attempted to skip tools on turn 0. Forcing tool usage.")
+                    next_prompt = "[SYSTEM] You MUST use the SEARCH or READ tool at least once to verify opcodes and structures in the target source code before providing your final analysis. Do not guess."
+                    messages.append({"role": "assistant", "content": text})
+                    messages.append({"role": "user", "content": next_prompt})
+                    continue
                 print(f"[CRITIC] → Final answer ({len(text):,} chars)")
                 return text
 
