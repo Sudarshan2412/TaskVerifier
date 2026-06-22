@@ -4,10 +4,6 @@ import requests
 import subprocess
 
 
-# Cache resolved constants per (image, source) pair so we don't re-grep
-# the container on every retry attempt for the same CVE.
-_constants_cache: dict[str, dict] = {}
-
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. Text-based Docker Executor
 # ──────────────────────────────────────────────────────────────────────────────
@@ -71,7 +67,7 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
     MAX_TURNS = int(os.environ.get("CRITIC_MAX_TURNS", "8"))
     for turn in range(MAX_TURNS):
         print(f"\n[CRITIC] Turn {turn + 1}/{MAX_TURNS}")
-        payload = {"model": model_id, "messages": messages, "max_tokens": 16384}
+        payload = {"model": model_id, "messages": messages, "max_tokens": 2048}
 
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=300)
@@ -228,6 +224,22 @@ def build_feedback(
         if not fuzzer_output:
             fuzzer_output = execution_result.get('stdout', '').strip()
 
+        # Add explicit interpretation of the silence so the agent and critic
+        # understand that "no output" means "parser rejected before vulnerable code."
+        exit_code = execution_result.get("exit_code", 0)
+        silence_note = (
+            f"\n[VERIFIER NOTE] The target binary exited normally (exit code {exit_code}) "
+            "with no ASAN/crash output. This means the parser read the file without "
+            "triggering any sanitizer error. The vulnerable code path was NOT reached. "
+            "The parser likely rejected the file structure before reaching the vulnerable "
+            "function — investigate which parsing stage returns early. "
+            "Look for error-return paths in the target source that could cause early exit.\n"
+        )
+        if fuzzer_output:
+            fuzzer_output = silence_note + "\nTarget output:\n" + fuzzer_output
+        else:
+            fuzzer_output = silence_note + "\nTarget output: (empty — no output at all)"
+
         sys_msg = (
             "You are a Senior Security Engineer investigating why a PoC exploit failed. "
             "You have access to a terminal in the target Docker container.\n\n"
@@ -290,34 +302,6 @@ def build_feedback(
                 f"If the binary name contains a format hint (e.g. 'MVG', 'jpeg', 'png'), "
                 f"the input file must be valid in that format.\n"
             )
-
-        # Pre-resolve constants from the target source (correct location — usr_msg is defined)
-        cache_key = f"{image_name}:{hash(target_source)}"
-        if cache_key in _constants_cache:
-            constants_found = _constants_cache[cache_key]
-            print(f"[DEBUG] Using cached constants ({len(constants_found)} entries)")
-        elif no_real_image:
-            constants_found = {}
-        else:
-            constants_found = {}
-            unique_names = list(dict.fromkeys(
-                m.group(1) for m in re.finditer(r'\b([A-Z][A-Z_]{3,}[A-Z])\b', target_source)
-            ))
-            for name in unique_names[:8]:  # cap to avoid runaway Docker calls — see Fix 3
-                result = execute_docker_tool("SEARCH", f"#define {name}", image_name)
-                if result and "returned no output" not in result and "Tool execution failed" not in result:
-                    constants_found[name] = result[:300]
-            _constants_cache[cache_key] = constants_found
-
-        if constants_found:
-            const_block = "\n".join(f"  {k}: {v.strip()[:100]}" for k, v in constants_found.items())
-            usr_msg = (
-                f"CONFIRMED CONSTANTS FROM CONTAINER (do not guess these values):\n"
-                f"{const_block}\n\n"
-            ) + usr_msg
-            print(f"[DEBUG] Pre-resolved {len(constants_found)} constants: {list(constants_found.keys())}")
-        else:
-            print("[DEBUG] No constants pre-resolved (none found or Docker unavailable)")
 
         print("\n[CRITIC] 🧠 Investigating execution failure with tools...")
         analysis = call_critic_llm(sys_msg, usr_msg, image_name)

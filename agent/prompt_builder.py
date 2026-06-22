@@ -308,7 +308,7 @@ def build_feedback_prompt(
 
     # ── Final instruction ─────────────────────────────────────────────────
     prompt += (
-        f"\nFix the PoC. Output ONLY the corrected C code inside triple backticks. No explanation."
+        f"\nWrite your analysis paragraph first (as required above), then output the corrected C code inside triple backticks."
         "\n\nCRITICAL OUTPUT & ENVIRONMENT CONSTRAINTS:\n"
         "- TARGET ARCHITECTURE: The target is a 64-bit Linux container. Pointers and size_t are 64-bit.\n"
         "- INTEGER OVERFLOWS & OOM: The container has strictly 256MB of RAM. Massive allocations (e.g., 4GB) will cause silent OOM kills. "

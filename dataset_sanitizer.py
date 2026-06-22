@@ -41,6 +41,13 @@ _LEAKAGE_FIELDS: set[str] = {
     "real_crash",
     "exit_code_vul",
     "crash_log_path",
+    # Potential future enrichment fields — strip defensively
+    "fix_description",
+    "call_chain",
+    "vulnerable_function",
+    "root_cause",
+    "patch_diff",
+    "reproduction_steps",
 }
 
 # Patterns in target_source comments that describe the vulnerability.
@@ -51,6 +58,10 @@ _EDITORIAL_COMMENT_PATTERNS: list[re.Pattern] = [
     re.compile(r"/\*\s*BUG\b[^*]*\*/", re.IGNORECASE),
     re.compile(r"/\*\s*FIX\b[^*]*\*/", re.IGNORECASE),
     re.compile(r"/\*\s*HACK\b[^*]*\*/", re.IGNORECASE),
+    # Block comments containing vulnerability-describing words anywhere inside
+    re.compile(r"/\*[^*]*\b(?:vulnerable|stale\s+pointer|use.after.free|heap.use|overflow(?!\s+check)|exploit)\b[^*]*\*/", re.IGNORECASE),
+    # Line comments that describe the vulnerability mechanism
+    re.compile(r"//[^\n]*\b(?:VULNERABLE|stale|use.after.free|overflow(?!\s+check)|exploit|HACK|BUG)\b[^\n]*", re.IGNORECASE),
 ]
 
 # Sanitizer markers in crash descriptions that indicate a real stacktrace.
@@ -64,6 +75,64 @@ _SANITIZER_MARKERS: list[str] = [
     "#0 ",
     "#1 ",
 ]
+
+
+
+# Sentence patterns that indicate a post-analysis narrative rather than ASAN output.
+_NARRATIVE_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\bFix\s+adjust", re.IGNORECASE),
+    re.compile(r"\btriggered\s+by\s+two\b", re.IGNORECASE),
+    re.compile(r"\brealloc\s+moves\s+the\s+buffer\b", re.IGNORECASE),
+    re.compile(r"\bfix\s+commits?\b", re.IGNORECASE),
+    re.compile(r"\broot\s+cause\b", re.IGNORECASE),
+    re.compile(r"\bvulnerability\s+requires\b", re.IGNORECASE),
+    re.compile(r"\bthe\s+bug\s+is\b", re.IGNORECASE),
+]
+
+
+def sanitize_crash_description(crash_desc: str) -> str:
+    """
+    Strip narrative prose from crash_description, retaining only the ASAN/MSAN/UBSAN
+    output block.
+
+    If the description looks like a human-written post-analysis essay (contains
+    explanation sentences), truncate to the ASAN summary line and top stack frames.
+
+    If the description looks like a raw sanitizer output, return it unchanged.
+
+    Format-agnostic: works for any ASAN/MSAN stacktrace.
+    """
+    if not crash_desc:
+        return crash_desc
+
+    is_narrative = any(p.search(crash_desc) for p in _NARRATIVE_PATTERNS)
+    if not is_narrative:
+        return crash_desc  # raw ASAN output — safe as-is
+
+    # Extract only the ASAN/sanitizer portion
+    lines = crash_desc.splitlines()
+    asan_lines = []
+    in_asan = False
+    for line in lines:
+        if any(marker in line for marker in [
+            "ERROR: AddressSanitizer", "ERROR: MemorySanitizer",
+            "ERROR: UndefinedBehaviorSanitizer", "SUMMARY:"
+        ]):
+            in_asan = True
+        if in_asan:
+            asan_lines.append(line)
+        if in_asan and line.startswith("SUMMARY:"):
+            break
+
+    if asan_lines:
+        return "\n".join(asan_lines)
+
+    # No ASAN block found — return only the first sentence (crash type, not explanation)
+    first_sentence_end = crash_desc.find(". ")
+    if first_sentence_end > 0:
+        return crash_desc[:first_sentence_end + 1].strip()
+
+    return crash_desc[:200]  # last resort
 
 
 def sanitize_entry(cve_entry: dict) -> dict:
@@ -96,6 +165,12 @@ def sanitize_entry(cve_entry: dict) -> dict:
         target_source = re.sub(r"\n{3,}", "\n\n", target_source)
         cleaned["target_source"] = target_source
 
+    # Sanitize crash_description — strip narrative prose, keep only ASAN output
+    if "crash_description" in cleaned:
+        cleaned["crash_description"] = sanitize_crash_description(
+            cleaned["crash_description"]
+        )
+
     return cleaned
 
 
@@ -121,6 +196,30 @@ def validate_crash_description(crash_desc: str) -> list[str]:
 
     return warnings
 
+
+
+# Fields that are explicitly allowed to reach the agent.
+# Any field not in this set and not in _LEAKAGE_FIELDS will trigger a warning.
+_ALLOWED_FIELDS: set[str] = {
+    "cve_id", "id", "task_id",
+    "docker_image_vul", "docker_image",
+    "crash_description",
+    "sanitizer_type",
+    "vuln_class",
+    "poc_bucket",
+    "target_source",
+    "fuzz_target",
+}
+
+
+def audit_unknown_fields(cve_entry: dict) -> list[str]:
+    """
+    Return a list of field names that are neither in the allowed set nor in the
+    leakage set.  These are unknown fields that may or may not constitute leakage
+    and should be reviewed manually before adding to the dataset.
+    """
+    known = _LEAKAGE_FIELDS | _ALLOWED_FIELDS
+    return [k for k in cve_entry if k not in known]
 
 def sanitize_dataset(entries: list[dict]) -> list[dict]:
     """

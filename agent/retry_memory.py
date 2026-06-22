@@ -39,7 +39,8 @@ from dataclasses import dataclass
 
 _MAX_ENTRIES = 8
 _MAX_APPROACH_LEN = 80
-_MAX_REASON_LEN = 80
+_MAX_REASON_LEN = 120
+_MAX_STRUCTURE_NOTE_LEN = 120
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class _FailedApproach:
     attempt: int
     approach: str
     reason: str
+    structure_notes: str = ""  # e.g. 'CFF2 table tag, blend op=0x17'
 
 
 class RetryMemory:
@@ -87,6 +89,32 @@ class RetryMemory:
             )
         )
 
+    def record_with_notes(
+        self,
+        attempt: int,
+        approach: str,
+        reason: str,
+        structure_notes: str = "",
+    ) -> None:
+        """
+        Record a failed attempt with optional structured notes.
+
+        structure_notes should be a one-line description of the key structural
+        choices made in this attempt — not the verifier output, but what the
+        PoC actually tried (e.g. "CFF2 table tag, blend op=0x17").
+        This helps distinguish attempts that differ only in internal structure.
+
+        Format-agnostic: any format-specific detail can go in structure_notes.
+        """
+        self._entries.append(
+            _FailedApproach(
+                attempt=attempt,
+                approach=approach[:_MAX_APPROACH_LEN],
+                reason=reason[:_MAX_REASON_LEN],
+                structure_notes=structure_notes[:_MAX_STRUCTURE_NOTE_LEN],
+            )
+        )
+
     def render(self) -> str:
         """
         Return a formatted "FAILED APPROACHES" block for injection into the
@@ -99,10 +127,13 @@ class RetryMemory:
             "FAILED APPROACHES — do NOT repeat these strategies:",
         ]
         for entry in self._entries:
-            lines.append(
+            detail = (
                 f"  ✗ Attempt {entry.attempt}: {entry.approach} "
                 f"→ FAILED because: {entry.reason}"
             )
+            if entry.structure_notes:
+                detail += f" [structural choices: {entry.structure_notes}]"
+            lines.append(detail)
         lines.append(
             "You MUST try a fundamentally different approach from all of the above.\n"
         )

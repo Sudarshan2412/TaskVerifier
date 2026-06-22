@@ -3,6 +3,7 @@ agent_loop.py — Central retry loop for single-CVE vulnerability reproduction.
 """
 
 import logging
+import re
 import os
 import time
 import hashlib
@@ -27,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 INTER_ATTEMPT_SLEEP_SECONDS = float(os.environ.get("INTER_ATTEMPT_SLEEP_SECONDS", "0"))
 FEW_SHOT_PATH = "few_shot_examples.json"
-_MAX_APPROACH_SUMMARY = 80  # max chars for approach summary in retry memory
-
 
 def _check_llm_client_has_history_support() -> None:
     try:
@@ -53,6 +52,61 @@ class AgentResult:
     failure_reason: str
     transcript: list[dict] = field(default_factory=list)
     hallucinated_symbols_per_attempt: list[list[str]] = field(default_factory=list)
+
+
+
+def _extract_approach_note(poc_code: str, feedback_text: str) -> str:
+    """
+    Extract a one-line structural note about what the PoC attempted.
+
+    Used to populate RetryMemory with enough detail to distinguish attempts
+    that all resulted in "no_crash" but tried different internal structures.
+
+    Format-agnostic: uses generic patterns for operator values, version numbers,
+    and format magic strings.  Does not contain any CVE-specific logic.
+
+    Returns a string of up to 120 chars, or "" if nothing useful is found.
+    """
+    notes = []
+
+    # Operator or opcode value mentioned in feedback
+    # Match "operator ... 0x17" or "opcode ... 0x17" with up to 3 words between
+    op_match = re.search(
+        r'\bop(?:code|erator)?(?:\s+\S+){0,3}?\s+(0x[0-9a-fA-F]{1,4})\b',
+        feedback_text, re.IGNORECASE
+    )
+    if not op_match:
+        # Also match simple "op=0x17" or "operator 0x17"
+        op_match = re.search(
+            r'\bop(?:code|erator)?\s*=?\s*(0x[0-9a-fA-F]{1,4})\b',
+            feedback_text, re.IGNORECASE
+        )
+    if op_match:
+        notes.append(f"op={op_match.group(1)}")
+
+    # Version number (CFF1/CFF2, table tag, format version integer)
+    ver_match = re.search(
+        r'\b(?:version|major|minor|tag)\s*([12]|0x[0-9a-fA-F]{4,8}|\'[\w ]{1,8}\')\b',
+        feedback_text, re.IGNORECASE
+    )
+    if ver_match:
+        notes.append(f"ver={ver_match.group(1)}")
+
+    # 4-char format tags in single quotes (e.g. 'CFF ', 'OTTO', 'CFF2')
+    tag_matches = re.findall(r"'([A-Z][A-Z0-9 ]{0,3})'", feedback_text)
+    if tag_matches:
+        notes.append(f"tags={'|'.join(tag_matches[:3])}")
+
+    # Key structural keywords that distinguish approaches
+    for kw in ("INDEX", "vstore", "FDSelect", "CharStrings", "PrivateDict", "GlyphTable",
+               "endchar", "vsindex", "blend", "FDArray", "Charstring"):
+        if re.search(r'\b' + kw + r'\b', feedback_text, re.IGNORECASE):
+            notes.append(kw)
+            break  # one keyword is enough for disambiguation
+
+    if not notes:
+        return ""
+    return (", ".join(notes))[:120]
 
 
 def run_agent(
@@ -294,16 +348,14 @@ def run_agent(
         # ── RETRY MEMORY ─────────────────────────────────────────────────────
         # Record this failed approach so the agent doesn't repeat it.
         if result.status != "crash":
-            # Extract a short approach summary from the feedback
-            approach_summary = last_feedback_text[:_MAX_APPROACH_SUMMARY]
-            # Try to extract a more useful summary from the first sentence
             first_line = last_feedback_text.split("\n")[0].strip()
-            if first_line:
-                approach_summary = first_line[:_MAX_APPROACH_SUMMARY]
-            retry_mem.record(
+            approach_summary = (first_line[:80] if first_line else last_feedback_text[:80])
+            structure_note = _extract_approach_note(poc_code, last_feedback_text)
+            retry_mem.record_with_notes(
                 attempt=attempt,
                 approach=approach_summary,
                 reason=result.status,
+                structure_notes=structure_note,
             )
 
         # ── TRANSCRIPT ENTRY ─────────────────────────────────────────────────
