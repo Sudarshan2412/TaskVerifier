@@ -306,6 +306,20 @@ def build_feedback(
 
         print("\n[CRITIC] 🧠 Investigating execution failure with tools...")
         analysis = call_critic_llm(sys_msg, usr_msg, image_name)
+        
+        # Strip excessive C code blocks from analysis to prevent generator confusion
+        code_blocks = re.findall(r"```[cC](.*?)```", analysis, re.DOTALL)
+        if code_blocks:
+            code_len = sum(len(b) for b in code_blocks)
+            if code_len > len(analysis) * 0.5:
+                analysis = re.sub(r"```[cC].*?```", "\n[CODE REMOVED]\n", analysis, flags=re.DOTALL)
+                warning = (
+                    "[CRITIC WARNING] The critic attempted to rewrite the generator code instead of "
+                    "providing diagnostic analysis. Focus on understanding WHY the payload failed, "
+                    "not on writing replacement code.\n\n"
+                )
+                analysis = warning + analysis
+
         return f"The PoC executed but did not trigger the vulnerability.\nSenior Engineer Analysis:\n{analysis}"
 
     return "Please fix the PoC and try again."

@@ -201,8 +201,7 @@ class FactAccumulator:
                     key = f"{category}:{key_name}"
                     value = match.group(2) if len(match.groups()) >= 2 else match.group(1)
 
-                if key not in self._facts:
-                    self._facts[key] = (category, value.strip())
+                self._facts[key] = (category, value.strip())
 
     def render(self) -> str:
         """
