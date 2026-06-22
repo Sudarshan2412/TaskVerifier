@@ -186,6 +186,7 @@ def build_feedback(
     image_name: str = None,
     poc_code: str = "",
     previous_feedback: str = "",
+    failed_approaches: str = "",
     cve_entry: dict = None
 ) -> str:
     if image_name is None:
@@ -246,6 +247,7 @@ def build_feedback(
             "7. For binary file formats (CFF, TIFF, DICOM, etc.), state the EXACT byte offset and "
             "encoding of each field. Vague instructions like 'fix the offset' are useless.\n"
             "8. Keep your final analysis concise and strictly under 500 words. Always start by clearly stating the root cause and the exact code changes needed. End your analysis naturally once complete.\n"
+            "9. AVOID CYCLES: You will be provided with a history of failed approaches. Do NOT suggest a strategy that has already failed. If two formats/approaches both fail, do not toggle between them. Instead, use SEARCH to find the correct structural requirements to make the original approach work.\n"
         )
 
         usr_msg = (
@@ -258,6 +260,9 @@ def build_feedback(
         )
 
         # Condense previous feedback to avoid compounding wrong theories
+        if failed_approaches:
+            usr_msg += f"\n\n{failed_approaches}"
+
         if previous_feedback:
             lines = previous_feedback.split('\n')
             cutoff_markers = ["## Instructions", "Instructions to the Junior", "Junior Engineer"]

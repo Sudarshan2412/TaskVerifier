@@ -216,7 +216,8 @@ def run_agent(
             result = verifier.verify(
                 poc_code=poc_code,
                 cve_entry=cve_entry,
-                previous_feedback=last_feedback_text
+                previous_feedback=last_feedback_text,
+                failed_approaches=retry_mem.render()
             )
             logger.debug(f"CVE {cve_id}: Attempt {attempt} verifier status: {result.status}")
 
