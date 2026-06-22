@@ -26,7 +26,7 @@ def execute_docker_tool(cmd_type: str, arg: str, image_name: str) -> str:
             query = arg.strip()
             print(f"\n[CRITIC] 🛠️  SEARCH {query!r}")
             cmd = ['docker', 'run', '--rm', '--entrypoint', '', image_name,
-                   'sh', '-c', f'grep -rn "{query}" /src/ /work/include/ 2>/dev/null | head -50']
+                   'sh', '-c', f'grep -rn "{query}" /src/ /work/include/ 2>/dev/null | head -200']
 
         else:
             return "Error: Unknown command."
@@ -248,6 +248,7 @@ def build_feedback(
             "encoding of each field. Vague instructions like 'fix the offset' are useless.\n"
             "8. Keep your final analysis concise and strictly under 500 words. Always start by clearly stating the root cause and the exact code changes needed. End your analysis naturally once complete.\n"
             "9. AVOID CYCLES: You will be provided with a history of failed approaches. Do NOT suggest a strategy that has already failed. If two formats/approaches both fail, do not toggle between them. Instead, use SEARCH to find the correct structural requirements to make the original approach work.\n"
+            "10. DO NOT GUESS OPCODES: If the failure involves an unrecognized operator, instruction, or token, DO NOT guess its byte value. You MUST use SEARCH to locate the exact opcode definitions in the target's source code (e.g., looking in header files or token tables) to verify the correct byte sequence.\n"
         )
 
         usr_msg = (
