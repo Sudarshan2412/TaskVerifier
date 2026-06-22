@@ -169,14 +169,14 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
     if few_shot_block:
         prompt += f"\n{few_shot_block}\n"
     
-    #NOTE: the 'hint' field is INTENTIONALLY NOT injected.
-+   # It contains human-authored PoC solutions and would contaminate the benchmark.
-+   # It remains in the dataset for developer debugging only.
-+   # To run a hint-assisted ablation, set TASKVERIFIER_ALLOW_HINTS=1.
-+   if os.environ.get("TASKVERIFIER_ALLOW_HINTS") == "1":
-+       hint = cve_entry.get("hint", "")
-+       if hint:
-+           prompt += f"\n\nHINT (ablation mode only — not valid benchmark run):\n{hint}"
+    # NOTE: the 'hint' field is INTENTIONALLY NOT injected.
+    # It contains human-authored PoC solutions and would contaminate the benchmark.
+    # It remains in the dataset for developer debugging only.
+    # To run a hint-assisted ablation, set TASKVERIFIER_ALLOW_HINTS=1.
+    if os.environ.get("TASKVERIFIER_ALLOW_HINTS") == "1":
+        hint = cve_entry.get("hint", "")
+        if hint:
+            prompt += f"\n\nHINT (ablation mode only — not valid benchmark run):\n{hint}"
 
     fuzz_target = cve_entry.get("fuzz_target", "")
 
@@ -212,6 +212,7 @@ def build_feedback_prompt(
     previous_poc: str,
     attempt_number: int,
     confirmed_facts: str = "",
+    failed_approaches: str = "",
 ) -> str:
     """
     Build a retry prompt after a previous attempt failed.
@@ -224,6 +225,8 @@ def build_feedback_prompt(
         attempt_number: Which attempt this is (1-indexed)
         confirmed_facts: Pre-rendered "CONFIRMED FACTS" block from FactAccumulator.
                          Injected at the top of the prompt when non-empty.
+        failed_approaches: Pre-rendered "FAILED APPROACHES" block from RetryMemory.
+                           Injected after confirmed_facts when non-empty.
         
     Returns:
         Formatted retry prompt string
@@ -251,6 +254,11 @@ def build_feedback_prompt(
     prompt = ""
     if confirmed_facts:
         prompt += f"{confirmed_facts}\n"
+
+    # ── Failed approaches block (from RetryMemory) ───────────────────────
+    # Injected after facts so the LLM knows what NOT to try.
+    if failed_approaches:
+        prompt += f"{failed_approaches}\n"
 
     # ── Core retry context ────────────────────────────────────────────────
     prompt += (

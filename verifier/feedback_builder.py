@@ -68,7 +68,7 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
         {"role": "user",   "content": usr_msg}
     ]
 
-    MAX_TURNS = 6
+    MAX_TURNS = int(os.environ.get("CRITIC_MAX_TURNS", "8"))
     for turn in range(MAX_TURNS):
         print(f"\n[CRITIC] Turn {turn + 1}/{MAX_TURNS}")
         payload = {"model": model_id, "messages": messages, "max_tokens": 16384}

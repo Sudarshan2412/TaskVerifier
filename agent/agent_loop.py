@@ -19,6 +19,7 @@ from agent.prompt_builder import (
 from agent.code_extractor import extract_code, ExtractionError
 from agent.context_manager import ContextManager
 from agent.fact_accumulator import FactAccumulator
+from agent.retry_memory import RetryMemory
 from verifier import VerifierPipeline
 from verifier.hallucination_detector import detect_hallucinations
 
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 INTER_ATTEMPT_SLEEP_SECONDS = float(os.environ.get("INTER_ATTEMPT_SLEEP_SECONDS", "0"))
 FEW_SHOT_PATH = "few_shot_examples.json"
+_MAX_APPROACH_SUMMARY = 80  # max chars for approach summary in retry memory
 
 
 def _check_llm_client_has_history_support() -> None:
@@ -88,6 +90,7 @@ def run_agent(
     last_hallucinated_symbols = []
     seen_poc_hashes: set[str] = set()
     fact_acc = FactAccumulator()  # accumulates confirmed facts across all retry attempts
+    retry_mem = RetryMemory()  # tracks failed approaches to prevent cycling
 
     cve_id = cve_entry.get("id") or cve_entry.get("cve_id", "unknown")
     logger.info(f"Starting agent loop for CVE {cve_id} with max_attempts={max_attempts}")
@@ -109,6 +112,7 @@ def run_agent(
                     previous_poc=last_poc,
                     attempt_number=attempt - 1,
                     confirmed_facts=fact_acc.render(),
+                    failed_approaches=retry_mem.render(),
                 )
                 sl.log_prompt_built("feedback", len(prompt))
                 # NEW: log what feedback is being sent so you can follow the loop
@@ -285,6 +289,21 @@ def run_agent(
         # Extract any confirmed constants, offsets, or operator codes the critic
         # discovered this round and carry them into the next retry prompt.
         fact_acc.update(last_feedback_text)
+
+        # ── RETRY MEMORY ─────────────────────────────────────────────────────
+        # Record this failed approach so the agent doesn't repeat it.
+        if result.status != "crash":
+            # Extract a short approach summary from the feedback
+            approach_summary = last_feedback_text[:_MAX_APPROACH_SUMMARY]
+            # Try to extract a more useful summary from the first sentence
+            first_line = last_feedback_text.split("\n")[0].strip()
+            if first_line:
+                approach_summary = first_line[:_MAX_APPROACH_SUMMARY]
+            retry_mem.record(
+                attempt=attempt,
+                approach=approach_summary,
+                reason=result.status,
+            )
 
         # ── TRANSCRIPT ENTRY ─────────────────────────────────────────────────
         exec_details = result.details.get("execution", {}) if hasattr(result, "details") else {}

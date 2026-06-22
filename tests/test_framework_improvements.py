@@ -16,6 +16,8 @@ import pytest
 from agent.format_hints import get_format_hint, FORMAT_HINTS, FormatHintEntry
 from agent.fact_accumulator import FactAccumulator
 from agent.prompt_builder import build_feedback_prompt
+from agent.retry_memory import RetryMemory
+from dataset_sanitizer import sanitize_entry, validate_crash_description
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -448,3 +450,131 @@ class TestBuildFeedbackPrompt:
         """The prohibition on hex byte arrays must appear in every retry prompt."""
         prompt = self._make_prompt()
         assert "hex byte array" in prompt.lower() or "unsigned char" in prompt.lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 4. DatasetSanitizer
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestDatasetSanitizer:
+
+    def test_strips_leakage_fields(self):
+        entry = {
+            "id": "test:001",
+            "hint": "the literal answer",
+            "fix_commit": "abcdef",
+            "docker_image_fix": "foo:fix",
+            "real_crash": False,
+            "exit_code_vul": 0,
+            "crash_log_path": "/tmp/crash.txt",
+            "valid_field": "keep me",
+        }
+        sanitized = sanitize_entry(entry)
+        
+        # All leakage fields should be gone
+        assert "hint" not in sanitized
+        assert "fix_commit" not in sanitized
+        assert "docker_image_fix" not in sanitized
+        assert "real_crash" not in sanitized
+        assert "exit_code_vul" not in sanitized
+        assert "crash_log_path" not in sanitized
+        
+        # Valid fields should remain
+        assert sanitized["valid_field"] == "keep me"
+        assert sanitized["id"] == "test:001"
+        
+        # Original should not be modified
+        assert "hint" in entry
+
+    def test_strips_editorial_comments_from_target_source(self):
+        source = (
+            "void func() {\n"
+            "  /* VULNERABLE: missing bounds check */\n"
+            "  int x = 1;\n"
+            "  /* stale pointer used here */\n"
+            "  /* BUG: off by one */\n"
+            "  /* FIX: add check */\n"
+            "  /* HACK: bypass */\n"
+            "  return;\n"
+            "}"
+        )
+        entry = {"target_source": source}
+        sanitized = sanitize_entry(entry)
+        
+        cleaned = sanitized["target_source"]
+        assert "VULNERABLE" not in cleaned
+        assert "stale" not in cleaned
+        assert "BUG" not in cleaned
+        assert "FIX" not in cleaned
+        assert "HACK" not in cleaned
+        assert "int x = 1;" in cleaned
+        assert "return;" in cleaned
+
+    def test_validate_crash_description(self):
+        # Empty
+        warnings = validate_crash_description("")
+        assert len(warnings) == 1
+        assert "empty" in warnings[0].lower()
+        
+        # Missing markers (human-written)
+        warnings = validate_crash_description("This crashes because the pointer is stale.")
+        assert len(warnings) == 1
+        assert "markers" in warnings[0].lower()
+        
+        # Valid ASAN
+        warnings = validate_crash_description("==1==ERROR: AddressSanitizer: heap-buffer-overflow\n#0 0x123 in foo")
+        assert len(warnings) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 5. RetryMemory
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestRetryMemory:
+
+    def test_empty_memory_renders_empty_string(self):
+        mem = RetryMemory()
+        assert mem.render() == ""
+
+    def test_records_and_renders_approaches(self):
+        mem = RetryMemory()
+        mem.record(1, "Tried CFF2", "major=2 rejected")
+        mem.record(2, "Tried BigTIFF", "invalid magic")
+        
+        rendered = mem.render()
+        assert "FAILED APPROACHES" in rendered
+        assert "Attempt 1: Tried CFF2" in rendered
+        assert "FAILED because: major=2 rejected" in rendered
+        assert "Attempt 2: Tried BigTIFF" in rendered
+        assert "invalid magic" in rendered
+
+    def test_truncates_long_strings(self):
+        mem = RetryMemory()
+        long_approach = "A" * 100
+        long_reason = "B" * 100
+        mem.record(1, long_approach, long_reason)
+        
+        rendered = mem.render()
+        assert len(rendered) < 400
+        assert "A" * 81 not in rendered  # Should be truncated to 80
+        assert "B" * 81 not in rendered
+
+    def test_fifo_eviction(self):
+        mem = RetryMemory(max_entries=3)
+        mem.record(1, "A1", "R1")
+        mem.record(2, "A2", "R2")
+        mem.record(3, "A3", "R3")
+        mem.record(4, "A4", "R4")  # Should evict A1
+        
+        assert len(mem) == 3
+        rendered = mem.render()
+        assert "A1" not in rendered
+        assert "A2" in rendered
+        assert "A4" in rendered
+
+    def test_reset_clears_memory(self):
+        mem = RetryMemory()
+        mem.record(1, "A", "R")
+        mem.reset()
+        assert len(mem) == 0
+        assert mem.render() == ""
