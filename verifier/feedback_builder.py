@@ -67,7 +67,7 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
     MAX_TURNS = int(os.environ.get("CRITIC_MAX_TURNS", "8"))
     for turn in range(MAX_TURNS):
         print(f"\n[CRITIC] Turn {turn + 1}/{MAX_TURNS}")
-        payload = {"model": model_id, "messages": messages, "max_tokens": 2048}
+        payload = {"model": model_id, "messages": messages, "max_tokens": 8192}
 
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=300)
@@ -229,11 +229,8 @@ def build_feedback(
         exit_code = execution_result.get("exit_code", 0)
         silence_note = (
             f"\n[VERIFIER NOTE] The target binary exited normally (exit code {exit_code}) "
-            "with no ASAN/crash output. This means the parser read the file without "
-            "triggering any sanitizer error. The vulnerable code path was NOT reached. "
-            "The parser likely rejected the file structure before reaching the vulnerable "
-            "function — investigate which parsing stage returns early. "
-            "Look for error-return paths in the target source that could cause early exit.\n"
+            "without triggering any sanitizer error. The vulnerable code path was not reached. "
+            "Use SEARCH to investigate why.\n"
         )
         if fuzzer_output:
             fuzzer_output = silence_note + "\nTarget output:\n" + fuzzer_output
@@ -245,7 +242,11 @@ def build_feedback(
             "You have access to a terminal in the target Docker container.\n\n"
             "MANDATORY FIRST STEP: Before any analysis, you MUST search the target source "
             "for the exact function definitions, struct sizes, or constants involved in parsing "
-            "the input. Do not proceed with analysis until you have confirmed the context.\n\n"
+            "the input. If the fuzz target binary path is known, SEARCH for its source code "
+            "in the container (e.g., search for the binary name or `LLVMFuzzerTestOneInput`) "
+            "to understand exactly how the library is invoked. This tells you what API functions "
+            "are called and what code paths are reachable. Do not proceed with analysis until "
+            "you have confirmed the context.\n\n"
             "To search: SEARCH: <keyword>\n"
             "To read a file: READ: /absolute/path/to/file.c\n\n"
             "RULES:\n"

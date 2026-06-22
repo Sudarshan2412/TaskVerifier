@@ -217,11 +217,16 @@ def run_agent(
             if poc_hash in seen_poc_hashes:
                 # Model is spinning — force a different temperature on the next call
                 logger.warning(f"CVE {cve_id}: Attempt {attempt}: LLM regenerated identical PoC. Forcing deviation.")
+                prior_summary = retry_mem.render()
+                if prior_summary:
+                    prior_summary = f"\n\nHere is a summary of approaches that have ALREADY FAILED:\n{prior_summary}\n"
+                
                 last_feedback_text = (
                     "CRITICAL: You generated the exact same code as a previous attempt. "
                     "This is not acceptable. You MUST try a completely different approach — "
                     "different payload structure, different vulnerability trigger path, different format. "
                     "Do not repeat any previously tried approach."
+                    f"{prior_summary}"
                 )
                 transcript.append({
                     "attempt": attempt, "prompt": prompt, "raw_response": raw_response,
