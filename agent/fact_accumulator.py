@@ -159,6 +159,19 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
 # FactAccumulator class
 # ---------------------------------------------------------------------------
 
+_STOPWORDS = frozenset({
+    "the", "a", "an", "is", "it", "which", "that", "this", "to", "of",
+    "in", "for", "and", "or", "but", "if", "at", "by", "from", "with",
+    "on", "as", "so", "no", "not", "be", "was", "were", "been", "are",
+    "has", "have", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "must", "shall", "can", "need", "each",
+    "every", "all", "any", "both", "few", "more", "most", "other",
+    "some", "such", "than", "too", "very", "just", "because", "about",
+    "into", "through", "during", "before", "after", "above", "below",
+    "between", "out", "off", "over", "under", "again", "further", "then",
+    "once", "here", "there", "when", "where", "why", "how", "what",
+})
+
 class FactAccumulator:
     """
     Maintains a deduplicated, ordered store of confirmed facts extracted from
@@ -198,6 +211,11 @@ class FactAccumulator:
                     value = match.group(1)
                 else:
                     key_name = _normalise(match.group(1))
+                    
+                    # Skip garbage extractions: stopwords, short words, or hex strings (which are usually values, not keys)
+                    if len(key_name) < 3 or key_name in _STOPWORDS or re.match(r'^0x[0-9a-f]+$', key_name):
+                        continue
+                        
                     key = f"{category}:{key_name}"
                     value = match.group(2) if len(match.groups()) >= 2 else match.group(1)
 

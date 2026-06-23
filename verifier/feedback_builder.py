@@ -24,6 +24,12 @@ def execute_docker_tool(cmd_type: str, arg: str, image_name: str) -> str:
             cmd = ['docker', 'run', '--rm', '--entrypoint', '', image_name,
                    'sh', '-c', f'grep -rn "{query}" /src/ /work/include/ 2>/dev/null | head -200']
 
+        elif cmd_type == "READ_HEX":
+            filepath = arg.strip()
+            print(f"\n[CRITIC] 🛠️  HEXDUMP {filepath}")
+            cmd = ['docker', 'run', '--rm', '--entrypoint', '', image_name,
+                   'sh', '-c', f'xxd "{filepath}" 2>/dev/null | head -60']
+
         else:
             return "Error: Unknown command."
 
@@ -92,18 +98,20 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
 
             # Heuristic: if it doesn't end with a terminal character, it was probably truncated
             # even if finish_reason == 'stop'.
-            is_truncated = False
             if finish_reason == 'length':
                 is_truncated = True
             elif len(text) > 1000 and text[-1] not in ".!?\n`>":
                 is_truncated = True
 
-            if is_truncated:
-                print(f"[CRITIC] ⚠️ API response truncated. Sending recovery prompt...")
+            # NEW: detect "soft truncation" where the model stopped but mid-sentence
+            is_soft_truncated = finish_reason != 'length' and text and not text.rstrip().endswith(('.', '!', '?', '`', '"', "'", '}'))
+
+            if finish_reason == 'length' or is_soft_truncated:
+                print(f"[CRITIC] ⚠️ API response truncated (length limit or soft cutoff). Sending recovery prompt...")
                 messages.append({"role": "assistant", "content": text})
                 messages.append({
                     "role": "user", 
-                    "content": "[SYSTEM CRITICAL: Your previous response was cut off. You MUST output ONLY the exact root cause and the required code fixes immediately. Do NOT use any internal thinking or reasoning, just state the solution.]"
+                    "content": "[SYSTEM CRITICAL: Your previous response was cut off mid-sentence. You MUST output ONLY the exact root cause and the required code fixes immediately. Do NOT use any internal thinking or reasoning, just state the solution.]"
                 })
                 if turn == MAX_TURNS - 1:
                     print("[CRITIC] Emergency final-turn recovery call...")
@@ -266,6 +274,8 @@ def build_feedback(
             fuzzer_output = silence_note + "\nTarget output:\n" + fuzzer_output
         else:
             fuzzer_output = silence_note + "\nTarget output: (empty — no output at all)"
+            
+        hex_dump = execute_docker_tool("READ_HEX", "/tmp/poc", image_name)
 
         sys_msg = (
             "You are a Senior Security Engineer investigating why a PoC exploit failed. "
@@ -305,6 +315,9 @@ def build_feedback(
             f"Target Binary Output:\n{fuzzer_output[-5000:]}\n\n"
             f"Use your SEARCH and READ tools to investigate."
         )
+
+        if hex_dump and "returned no output" not in hex_dump and "Tool execution failed" not in hex_dump:
+            usr_msg += f"\n\nHex dump of generated file (first 960 bytes):\n```\n{hex_dump}\n```\n"
 
         # Condense previous feedback to avoid compounding wrong theories
         if failed_approaches:
