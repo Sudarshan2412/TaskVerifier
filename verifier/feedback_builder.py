@@ -304,6 +304,7 @@ def build_feedback(
             "10. DO NOT GUESS OPCODES: If the failure involves an unrecognized operator, instruction, or token, DO NOT guess its byte value. You MUST use SEARCH to locate the exact opcode definitions in the target's source code (e.g., looking in header files or token tables) to verify the correct byte sequence.\n"
             "11. Trace execution backwards from the vulnerable function. Identify exactly which struct sizes, bounds checks (e.g., dataCount > 0), or stack limits (e.g., maxstack) must be satisfied to reach it.\n"
             "12. The Vulnerability Description is GROUND TRUTH. Do not invent alternative code paths or assert that the vulnerability occurs elsewhere (e.g., during glyph loading instead of parsing). Your job is strictly to figure out why the PoC failed to reach the specific path described.\n"
+            "13. CRITICAL: DO NOT WRITE ANY C CODE. Your output will be read by an automated agent. Do not provide a corrected PoC or code blocks. Provide ONLY your textual analysis and the specific byte offsets/values that need to change.\n"
         )
 
         usr_msg = (
@@ -354,11 +355,11 @@ def build_feedback(
         analysis = call_critic_llm(sys_msg, usr_msg, image_name)
         
         # Strip excessive C code blocks from analysis to prevent generator confusion
-        code_blocks = re.findall(r"```[cC](.*?)```", analysis, re.DOTALL)
+        code_blocks = re.findall(r"```[cC](.*?)(?:```|$)", analysis, re.DOTALL)
         if code_blocks:
             code_len = sum(len(b) for b in code_blocks)
             if code_len > len(analysis) * 0.5:
-                analysis = re.sub(r"```[cC].*?```", "\n[CODE REMOVED]\n", analysis, flags=re.DOTALL)
+                analysis = re.sub(r"```[cC](.*?)(?:```|$)", "\n[CODE REMOVED]\n", analysis, flags=re.DOTALL)
                 warning = (
                     "[CRITIC WARNING] The critic attempted to rewrite the generator code instead of "
                     "providing diagnostic analysis. Focus on understanding WHY the payload failed, "
