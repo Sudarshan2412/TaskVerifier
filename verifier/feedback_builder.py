@@ -292,7 +292,7 @@ def build_feedback(
             "RULES:\n"
             "1. ONE command per turn.\n"
             "2. NEVER guess a constant value. If SEARCH returns nothing, try a broader query.\n"
-            "3. Once you have confirmed all constants, output your final analysis.\n"
+            "3. Once you have confirmed all constants, state them explicitly using the exact phrase 'X confirmed as Y' (e.g., 'MAX_SIZE confirmed as 4096'). Do not use generic assignments like 'X = Y'. Then output your final analysis.\n"
             "4. Do NOT contradict a previous analysis unless you have new tool evidence.\n"
             "5. If a previous analysis identified the correct file format or attack vector, "
             "preserve that finding — only revise it if tool output proves it wrong.\n"
