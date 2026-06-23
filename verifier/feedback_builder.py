@@ -104,7 +104,8 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
                 is_truncated = True
 
             # NEW: detect "soft truncation" where the model stopped but mid-sentence
-            is_soft_truncated = finish_reason != 'length' and text and not text.rstrip().endswith(('.', '!', '?', '`', '"', "'", '}'))
+            is_tool_call = "READ:" in text or "SEARCH:" in text
+            is_soft_truncated = finish_reason != 'length' and text and not text.rstrip().endswith(('.', '!', '?', '`', '"', "'", '}')) and not is_tool_call
 
             if finish_reason == 'length' or is_soft_truncated:
                 print(f"[CRITIC] ⚠️ API response truncated (length limit or soft cutoff). Sending recovery prompt...")
