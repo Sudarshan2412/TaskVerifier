@@ -98,7 +98,21 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
                     "content": "[SYSTEM CRITICAL: Your previous response was cut off because you reached the maximum API length limit. You MUST output ONLY the exact root cause and the required code fixes immediately. Do NOT use any internal thinking or reasoning, just state the solution.]"
                 })
                 if turn == MAX_TURNS - 1:
-                    return text + "\n[System: Final turn output truncated due to API limit.]"
+                    print("[CRITIC] Emergency final-turn recovery call...")
+                    try:
+                        emerg_resp = requests.post(url, headers=headers, json={"model": model_id, "messages": messages, "max_tokens": 2048}, timeout=100)
+                        emerg_resp.raise_for_status()
+                        
+                        emerg_choice = emerg_resp.json()['choices'][0]
+                        emerg_content = emerg_choice['message']['content']
+                        if emerg_content is None:
+                            emerg_text = ""
+                        else:
+                            emerg_text = emerg_content.strip()
+                            
+                        return text + "\n\n[EMERGENCY CONTINUATION]:\n" + emerg_text
+                    except Exception as e:
+                        return text + "\n[System: Final turn output truncated, emergency recovery failed.]"
                 continue
 
             # Force return on final turn
