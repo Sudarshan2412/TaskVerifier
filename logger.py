@@ -433,7 +433,7 @@ class ReportWriter:
                 if feedback:
                     lines.append("**Feedback to next attempt:**")
                     lines.append("```")
-                    lines.append(feedback[:800])
+                    lines.append(feedback)
                     lines.append("```")
                 lines.append("")
                 lines.append("</details>")
