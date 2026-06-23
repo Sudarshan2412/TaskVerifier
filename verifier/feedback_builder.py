@@ -90,12 +90,20 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
             else:
                 text = content.strip()
 
+            # Heuristic: if it doesn't end with a terminal character, it was probably truncated
+            # even if finish_reason == 'stop'.
+            is_truncated = False
             if finish_reason == 'length':
-                print(f"[CRITIC] ⚠️ API response truncated (length limit). Sending recovery prompt...")
+                is_truncated = True
+            elif len(text) > 1000 and text[-1] not in ".!?\n`>":
+                is_truncated = True
+
+            if is_truncated:
+                print(f"[CRITIC] ⚠️ API response truncated. Sending recovery prompt...")
                 messages.append({"role": "assistant", "content": text})
                 messages.append({
                     "role": "user", 
-                    "content": "[SYSTEM CRITICAL: Your previous response was cut off because you reached the maximum API length limit. You MUST output ONLY the exact root cause and the required code fixes immediately. Do NOT use any internal thinking or reasoning, just state the solution.]"
+                    "content": "[SYSTEM CRITICAL: Your previous response was cut off. You MUST output ONLY the exact root cause and the required code fixes immediately. Do NOT use any internal thinking or reasoning, just state the solution.]"
                 })
                 if turn == MAX_TURNS - 1:
                     print("[CRITIC] Emergency final-turn recovery call...")
@@ -113,6 +121,8 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
                         return text + "\n\n[EMERGENCY CONTINUATION]:\n" + emerg_text
                     except Exception as e:
                         return text + "\n[System: Final turn output truncated, emergency recovery failed.]"
+                
+                # If not final turn, loop again so the model can supply the rest
                 continue
 
             # Force return on final turn
@@ -279,7 +289,7 @@ def build_feedback(
             "6. ALWAYS check the crash trace call stack to determine which parsing stage the vulnerable function belongs to. Do not assume the vulnerability is in the first or most obvious code path — trace the actual call chain.\n"
             "7. For binary file formats (CFF, TIFF, DICOM, etc.), state the EXACT byte offset and "
             "encoding of each field. Vague instructions like 'fix the offset' are useless.\n"
-            "8. Keep your final analysis concise and strictly under 800 words. Always start by clearly stating the root cause and the exact code changes needed. End your analysis naturally once complete.\n"
+            "8. Always start by clearly stating the root cause and the exact code changes needed. Be precise and detail all necessary structural changes and offsets. End your analysis naturally once complete.\n"
             "9. AVOID CYCLES: You will be provided with a history of failed approaches. Do NOT suggest a strategy that has already failed. If two formats/approaches both fail, do not toggle between them. Instead, use SEARCH to find the correct structural requirements to make the original approach work.\n"
             "10. DO NOT GUESS OPCODES: If the failure involves an unrecognized operator, instruction, or token, DO NOT guess its byte value. You MUST use SEARCH to locate the exact opcode definitions in the target's source code (e.g., looking in header files or token tables) to verify the correct byte sequence.\n"
             "11. Trace execution backwards from the vulnerable function. Identify exactly which struct sizes, bounds checks (e.g., dataCount > 0), or stack limits (e.g., maxstack) must be satisfied to reach it.\n"
