@@ -30,6 +30,7 @@ from __future__ import annotations
 import copy
 import re
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,16 @@ def sanitize_entry(cve_entry: dict) -> dict:
     The original dict is NOT modified.
     """
     cleaned = copy.deepcopy(cve_entry)
+
+    # ── Load real crash log if available ──────────────────────────────────
+    crash_log_path = cleaned.get("crash_log_path")
+    if crash_log_path and os.path.exists(crash_log_path):
+        try:
+            with open(crash_log_path, "r", encoding="utf-8") as f:
+                cleaned["crash_description"] = f.read()
+            logger.info("Sanitizer: Loaded real crash log from %s", crash_log_path)
+        except Exception as e:
+            logger.warning("Sanitizer: Failed to read crash_log_path %s: %s", crash_log_path, e)
 
     # ── Strip leakage fields ──────────────────────────────────────────────
     removed = []

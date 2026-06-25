@@ -12,6 +12,7 @@ from pathlib import Path
 
 from agent.agent_loop import run_agent
 from logger import StepLogger, ReportWriter
+from dataset_sanitizer import sanitize_entry
 
 MAX_ATTEMPTS = int(os.environ.get("WEEK8_MAX_ATTEMPTS", "2"))
 
@@ -83,7 +84,7 @@ with open("cybergym_subset.json") as f:
     subset = json.load(f)
 
 test_cves_raw = select_test_cves(subset, n=2, explicit_ids=TARGET_CVE_IDS)
-test_cves = [_normalize_cve_entry(cve) for cve in test_cves_raw]
+test_cves = [_normalize_cve_entry(sanitize_entry(cve)) for cve in test_cves_raw]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
