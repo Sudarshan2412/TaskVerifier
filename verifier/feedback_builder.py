@@ -51,6 +51,12 @@ def execute_docker_tool(cmd_type: str, arg: str, image_name: str) -> str:
 # 2. ReAct Critic Loop
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Maximum tokens for a single critic LLM response.  Kept at 2048 to match the
+# expected length of a diagnostic analysis and to avoid the soft-truncation
+# recovery path that can inject contradictory multi-turn guidance.
+_CRITIC_MAX_TOKENS = int(os.environ.get("CRITIC_MAX_TOKENS", "2048"))
+
+
 def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
     """Calls the LLM, handles text-based tool requests, returns final analysis."""
     api_key = os.environ.get("OPEN_ROUTER_KEY")
@@ -73,7 +79,13 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
     MAX_TURNS = int(os.environ.get("CRITIC_MAX_TURNS", "8"))
     for turn in range(MAX_TURNS):
         print(f"\n[CRITIC] Turn {turn + 1}/{MAX_TURNS}")
-        payload = {"model": model_id, "messages": messages, "max_tokens": 8192}
+        payload = {
+            "model": model_id,
+            "messages": messages,
+            # 2048 tokens matches the expected diagnostic length and prevents
+            # the truncation-recovery loop that injects contradictory messages.
+            "max_tokens": _CRITIC_MAX_TOKENS,
+        }
 
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=300)
@@ -117,7 +129,7 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
                 if turn == MAX_TURNS - 1:
                     print("[CRITIC] Emergency final-turn recovery call...")
                     try:
-                        emerg_resp = requests.post(url, headers=headers, json={"model": model_id, "messages": messages, "max_tokens": 2048}, timeout=100)
+                        emerg_resp = requests.post(url, headers=headers, json={"model": model_id, "messages": messages, "max_tokens": _CRITIC_MAX_TOKENS}, timeout=100)
                         emerg_resp.raise_for_status()
                         
                         emerg_choice = emerg_resp.json()['choices'][0]

@@ -9,6 +9,7 @@ Handles two cases:
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from agent.source_extractor import extract_source_from_container
 from agent.format_hints import get_format_hint
@@ -20,6 +21,80 @@ logger = logging.getLogger(__name__)
 # Path to few-shot examples file (available after Aparna's Week 3 handoff)
 FEW_SHOT_EXAMPLES_PATH = "few_shot_examples.json"
 
+
+# ---------------------------------------------------------------------------
+# Function-body stubbing
+# ---------------------------------------------------------------------------
+# Matches a C function definition body delimited by a single level of braces.
+# The substitution replaces the body with a fixed placeholder, retaining only
+# the signature.  This removes the vulnerable code path from what the agent
+# sees while preserving the type information it needs to understand the API.
+#
+# Deliberately format-agnostic: operates on any C source regardless of project,
+# naming convention, or vulnerability class.  Does NOT match declarations
+# (no body) or preprocessor macros.
+_FUNC_BODY_RE = re.compile(
+    r"""
+    # Match a C function definition: return type(s) + name + params + body.
+    # We keep everything up to and including the opening '{', then elide the
+    # body and the closing '}'.
+    (?P<sig>
+        [^\n{};]+        # return type and function name (no braces, no stmts)
+        \([^)]*\)        # parameter list — single-level, no nested parens
+        \s*
+    )
+    \{
+    (?P<body>
+        [^{}]*           # body content that contains no nested braces
+        (?:
+            \{[^{}]*\}   # one level of nested braces (e.g. if/for blocks)
+            [^{}]*
+        )*
+    )
+    \}
+    """,
+    re.VERBOSE | re.DOTALL,
+)
+
+
+def _stub_function_bodies(source: str) -> str:
+    """
+    Replace function bodies with ``{ /* ... */ }``, retaining only signatures.
+
+    Example::
+
+        FT_LOCAL_DEF( FT_Error )
+        cff_blend_doBlend( CFF_SubFont subFont,
+                           CFF_Parser  parser,
+                           FT_UInt     numBlends )
+        {
+            ... 80 lines of vulnerable logic ...
+        }
+
+    becomes::
+
+        FT_LOCAL_DEF( FT_Error )
+        cff_blend_doBlend( CFF_SubFont subFont,
+                           CFF_Parser  parser,
+                           FT_UInt     numBlends )
+        { /* ... */ }
+
+    Rationale: injecting the full function body reveals the exact memory
+    operation that causes the crash (ground-truth leakage).  Signatures
+    retain the type information the agent legitimately needs to construct
+    correct function calls without disclosing the vulnerable code path.
+
+    Format-agnostic: applies to any C source regardless of project or
+    vulnerability class.  Leaves declarations and macros untouched.
+    """
+    if not source:
+        return source
+    return _FUNC_BODY_RE.sub(r'\g<sig>{ /* ... */ }', source)
+
+
+# ---------------------------------------------------------------------------
+# Few-shot example loading
+# ---------------------------------------------------------------------------
 
 def load_few_shot_examples(path: str = "few_shot_examples.json") -> list:
     """
@@ -113,6 +188,10 @@ def format_few_shot_block(examples: list) -> str:
     return "\n\n".join(formatted_parts)
 
 
+# ---------------------------------------------------------------------------
+# Prompt builders
+# ---------------------------------------------------------------------------
+
 def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
     """
     Build the initial prompt for the first attempt at generating a PoC.
@@ -141,6 +220,13 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
     sanitizer_type = cve_entry["sanitizer_type"]
     target_source = cve_entry["target_source"]
     crash_description = cve_entry["crash_description"]
+
+    # Reduce target_source to function signatures only — strip bodies.
+    # Injecting the full body of the vulnerable function constitutes
+    # ground-truth leakage: it reveals the exact memory operation that causes
+    # the crash.  The signatures retain the type information an agent needs to
+    # understand the API surface without handing it the solution.
+    target_source_display = _stub_function_bodies(target_source)
     
     # Format few-shot block
     few_shot_block = format_few_shot_block(few_shot_examples)
@@ -152,15 +238,18 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
         f"CVE ID: {cve_id}\n"
         f"Vulnerability class: {vuln_class}\n"
         f"Sanitizer: {sanitizer_type.upper()}\n"
-        f"--- Vulnerable Source ---\n"
+        f"--- Vulnerable Source (signatures only) ---\n"
         f"```c\n"
-        f"{target_source}\n"
+        f"{target_source_display}\n"
         f"```\n\n"
         f"Expected crash: {crash_description}\n"
     )
     
     # Pull additional source context from the container image.
-    # General-purpose: parses the crash stacktrace, greps the container for those functions.
+    # General-purpose: parses the crash stacktrace, greps the container for
+    # those functions.  After dataset_sanitizer redacts stack frame identifiers,
+    # this extractor returns "" for sanitized entries — the correct behaviour,
+    # since source context must come from format specs, not crash-site locations.
     container_source = extract_source_from_container(cve_entry)
     if container_source:
         prompt += f"\n{container_source}\n"

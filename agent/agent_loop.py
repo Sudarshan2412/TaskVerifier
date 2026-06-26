@@ -12,11 +12,8 @@ from dataclasses import dataclass, field
 from logger import NullStepLogger
 
 from agent import llm_client
-from agent.prompt_builder import (
-    build_initial_prompt,
-    build_feedback_prompt,
-    load_few_shot_examples,
-)
+from agent.prompt_builder import build_initial_prompt,build_feedback_prompt,load_few_shot_examples
+
 from agent.code_extractor import extract_code, ExtractionError
 from agent.context_manager import ContextManager
 from agent.fact_accumulator import FactAccumulator

@@ -15,6 +15,8 @@ Leakage categories handled
    shouldn't influence the agent.
 5. **Editorial comments in target_source**: inline comments like
    ``/* VULNERABLE: ... */`` describe the vulnerability mechanism.
+6. **Stack frame identifiers**: function names and source paths inside ASAN/
+   MSAN/UBSAN stack frames pinpoint the crash site and call chain.
 
 Public API
 ----------
@@ -77,8 +79,6 @@ _SANITIZER_MARKERS: list[str] = [
     "#1 ",
 ]
 
-
-
 # Sentence patterns that indicate a post-analysis narrative rather than ASAN output.
 _NARRATIVE_PATTERNS: list[re.Pattern] = [
     re.compile(r"\bFix\s+adjust", re.IGNORECASE),
@@ -90,16 +90,65 @@ _NARRATIVE_PATTERNS: list[re.Pattern] = [
     re.compile(r"\bthe\s+bug\s+is\b", re.IGNORECASE),
 ]
 
+# Matches a single ASAN/MSAN stack frame line, e.g.:
+#   #0 0x541fc5 in cff_parse_num /src/freetype2/src/cff/cffparse.c:440:10
+#   #3 0x56c0de in open_face /src/freetype2/src/base/ftobjs.c:1180:15
+# We capture up to and including the address, then replace everything after.
+_ASAN_FRAME_RE = re.compile(
+    r'^(\s*#\d+\s+0x[0-9a-fA-F]+)\s+in\s+\S+\s+\S+$',
+    re.MULTILINE,
+)
+
+# Matches the ASAN SUMMARY line which also encodes the crash-site source path
+# and function name, e.g.:
+#   SUMMARY: AddressSanitizer: heap-use-after-free /src/cff/cffparse.c:440:10 in cff_parse_num
+# We keep the sanitizer name and vulnerability class, strip the rest.
+_ASAN_SUMMARY_RE = re.compile(
+    r'^(SUMMARY:\s+\S+:\s+[\w.-]+)\s+/\S+(?:\s+in\s+\S+)?',
+    re.MULTILINE,
+)
+
+
+def redact_stacktrace_frames(crash_desc: str) -> str:
+    """
+    Replace function names and source paths in ASAN/MSAN/UBSAN stack frame
+    lines and the SUMMARY line with opaque placeholders, retaining only frame
+    indices, addresses, sanitizer name, and vulnerability class.
+
+    Before:
+        #0 0x541fc5 in cff_parse_num /src/freetype2/src/cff/cffparse.c:440:10
+        #1 0x5414da in cff_parser_run /src/freetype2/src/cff/cffparse.c:1543:26
+        SUMMARY: AddressSanitizer: heap-use-after-free /src/cff/cffparse.c:440 in cff_parse_num
+
+    After:
+        #0 0x541fc5 in <redacted> <redacted>
+        #1 0x5414da in <redacted> <redacted>
+        SUMMARY: AddressSanitizer: heap-use-after-free
+
+    The ERROR: summary line (first line) is preserved verbatim — it
+    communicates sanitizer class and access type, which are legitimate
+    format-level context with no crash-site specifics.
+
+    Format-agnostic: applies equally to ASAN, MSAN, UBSAN, and LSAN output
+    regardless of project, file format, or vulnerability class.
+    """
+    if not crash_desc:
+        return crash_desc
+    result = _ASAN_FRAME_RE.sub(r'\1 in <redacted> <redacted>', crash_desc)
+    result = _ASAN_SUMMARY_RE.sub(r'\1', result)
+    return result
+
 
 def sanitize_crash_description(crash_desc: str) -> str:
     """
     Strip narrative prose from crash_description, retaining only the ASAN/MSAN/UBSAN
-    output block.
+    output block, then redact function names and source paths from stack frames.
 
     If the description looks like a human-written post-analysis essay (contains
     explanation sentences), truncate to the ASAN summary line and top stack frames.
 
-    If the description looks like a raw sanitizer output, return it unchanged.
+    If the description looks like a raw sanitizer output, redact its frames and
+    return it.
 
     Format-agnostic: works for any ASAN/MSAN stacktrace.
     """
@@ -108,7 +157,8 @@ def sanitize_crash_description(crash_desc: str) -> str:
 
     is_narrative = any(p.search(crash_desc) for p in _NARRATIVE_PATTERNS)
     if not is_narrative:
-        return crash_desc  # raw ASAN output — safe as-is
+        # Raw ASAN output — redact frame identifiers before returning.
+        return redact_stacktrace_frames(crash_desc)
 
     # Extract only the ASAN/sanitizer portion
     lines = crash_desc.splitlines()
@@ -126,7 +176,9 @@ def sanitize_crash_description(crash_desc: str) -> str:
             break
 
     if asan_lines:
-        return "\n".join(asan_lines)
+        raw_block = "\n".join(asan_lines)
+        # Redact function names and source paths from all stack frames.
+        return redact_stacktrace_frames(raw_block)
 
     # No ASAN block found — return only the first sentence (crash type, not explanation)
     first_sentence_end = crash_desc.find(". ")
@@ -176,7 +228,7 @@ def sanitize_entry(cve_entry: dict) -> dict:
         target_source = re.sub(r"\n{3,}", "\n\n", target_source)
         cleaned["target_source"] = target_source
 
-    # Sanitize crash_description — strip narrative prose, keep only ASAN output
+    # Sanitize crash_description — strip narrative prose, redact stack frames
     if "crash_description" in cleaned:
         cleaned["crash_description"] = sanitize_crash_description(
             cleaned["crash_description"]
@@ -206,7 +258,6 @@ def validate_crash_description(crash_desc: str) -> list[str]:
         )
 
     return warnings
-
 
 
 # Fields that are explicitly allowed to reach the agent.
