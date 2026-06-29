@@ -47,15 +47,15 @@
     "cve_id": "arvo:10147",
     "docker_image_vul": "n132/arvo:10147-vul",
     "docker_image_fix": "n132/arvo:10147-fix",
-    "crash_description": "",
-    "sanitizer_type": "unknown",
-    "vuln_class": "other",
-    "exit_code_vul": 0,
-    "real_crash": false,
+    "crash_description": "Segmentation fault (core dumped)",
+    "sanitizer_type": "none",
+    "vuln_class": "segfault",
+    "exit_code_vul": 139,
+    "real_crash": true,
     "crash_log_path": "sample_crash_logs/arvo_10147_crash.txt",
     "poc_bucket": "short",
     "target_source": "static MagickPassFail IsDCM(const unsigned char *magick,const size_t length)\n{\n  if (length < 132)\n    return(False);\n  if (LocaleNCompare((char *) (magick+128),\"DICM\",4) == 0)\n    return(True);\n  return(False);\n}\n\nstatic MagickPassFail DCM_InitDCM(DicomStream *dcm,int verbose)\n{\n  (void) memset(dcm,0,sizeof(*dcm));\n  dcm->columns=0;\n  dcm->rows=0;\n  dcm->samples_per_pixel=1;\n  dcm->bits_allocated=8;\n  dcm->significant_bits=0;\n  dcm->high_bit=0;\n  dcm->bytes_per_pixel=1;\n  dcm->max_value_in=255;\n  dcm->max_value_out=255;\n  dcm->pixel_representation=0;\n  dcm->transfer_syntax=DCM_TS_IMPL_LITTLE;\n  dcm->interlace=0;\n  dcm->msb_state=DCM_MSB_LITTLE;\n  dcm->phot_interp=DCM_PI_MONOCHROME2;\n  dcm->window_center=0;\n  dcm->window_width=0;\n  dcm->rescale_intercept=0;\n  dcm->rescale_slope=1;\n  dcm->number_scenes=1;\n  dcm->data=NULL;\n  dcm->funcReadShort=ReadBlobLSBShort;\n  dcm->funcReadLong=ReadBlobLSBLong;\n  dcm->explicit_file=False;\n  dcm->verbose=verbose;\n  return MagickPass;\n}",
-    "fuzz_target": "/out/coder_DCM_fuzzer"
+    "fuzz_target": "/out/coder_JNX_fuzzer"
   },
   {
     "cve_id": "arvo:10252",
