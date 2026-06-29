@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.agent_loop import run_agent, AgentResult
+from dataset_sanitizer import sanitize_entry
 from evaluator import evaluate
 from logger import StepLogger, ReportWriter
 
@@ -21,6 +22,8 @@ def _poc_bucket(vuln: dict[str, Any]) -> str:
 
 
 def _normalize_cve_entry(cve: dict[str, Any]) -> dict[str, Any]:
+    # Strip leakage fields FIRST, before any normalization
+    cve = sanitize_entry(cve)
     normalized = {}
     normalized["id"] = cve.get("cve_id") or cve.get("id") or "UNKNOWN"
     normalized["vuln_class"] = cve.get("vuln_class", "other")

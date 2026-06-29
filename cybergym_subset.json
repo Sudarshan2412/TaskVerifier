@@ -47,15 +47,15 @@
     "cve_id": "arvo:10147",
     "docker_image_vul": "n132/arvo:10147-vul",
     "docker_image_fix": "n132/arvo:10147-fix",
-    "crash_description": "",
-    "sanitizer_type": "unknown",
-    "vuln_class": "other",
-    "exit_code_vul": 0,
-    "real_crash": false,
+    "crash_description": "Segmentation fault (core dumped)",
+    "sanitizer_type": "none",
+    "vuln_class": "segfault",
+    "exit_code_vul": 139,
+    "real_crash": true,
     "crash_log_path": "sample_crash_logs/arvo_10147_crash.txt",
     "poc_bucket": "short",
     "target_source": "static MagickPassFail IsDCM(const unsigned char *magick,const size_t length)\n{\n  if (length < 132)\n    return(False);\n  if (LocaleNCompare((char *) (magick+128),\"DICM\",4) == 0)\n    return(True);\n  return(False);\n}\n\nstatic MagickPassFail DCM_InitDCM(DicomStream *dcm,int verbose)\n{\n  (void) memset(dcm,0,sizeof(*dcm));\n  dcm->columns=0;\n  dcm->rows=0;\n  dcm->samples_per_pixel=1;\n  dcm->bits_allocated=8;\n  dcm->significant_bits=0;\n  dcm->high_bit=0;\n  dcm->bytes_per_pixel=1;\n  dcm->max_value_in=255;\n  dcm->max_value_out=255;\n  dcm->pixel_representation=0;\n  dcm->transfer_syntax=DCM_TS_IMPL_LITTLE;\n  dcm->interlace=0;\n  dcm->msb_state=DCM_MSB_LITTLE;\n  dcm->phot_interp=DCM_PI_MONOCHROME2;\n  dcm->window_center=0;\n  dcm->window_width=0;\n  dcm->rescale_intercept=0;\n  dcm->rescale_slope=1;\n  dcm->number_scenes=1;\n  dcm->data=NULL;\n  dcm->funcReadShort=ReadBlobLSBShort;\n  dcm->funcReadLong=ReadBlobLSBLong;\n  dcm->explicit_file=False;\n  dcm->verbose=verbose;\n  return MagickPass;\n}",
-    "fuzz_target": "/out/coder_DCM_fuzzer"
+    "fuzz_target": "/out/coder_JNX_fuzzer"
   },
   {
     "cve_id": "arvo:10252",
@@ -213,5 +213,20 @@
     "poc_length_bytes": 817,
     "target_source": "for (int y=0;y<height;y++) {\n    for (int x=0;x<width;x++) {\n      float r = in_r[y*in_r_stride + x];\n      float g = in_g[y*in_g_stride + x];\n      float b = in_b[y*in_b_stride + x];\n\n      out_y[y*out_y_stride + x] = (Pixel)clip((int32_t)(r*0.299f + g*0.587f + b*0.114f), fullRange);\n    }\n  }\n\n  for (int y=0;y<height;y+=subV) {\n    for (int x=0;x<width;x+=subH) {\n      float r = in_r[y*in_r_stride + x];\n      float g = in_g[y*in_g_stride + x];\n      float b = in_b[y*in_b_stride + x];\n\n      out_cb[(y/subV)*out_cb_stride + (x/subH)] = (Pixel)clip(halfRange + (int32_t)(-r*0.168736f - g*0.331264f + b*0.5f), fullRange);\n      out_cr[(y/subV)*out_cr_stride + (x/subH)] = (Pixel)clip(halfRange + (int32_t)(r*0.5f - g*0.418688f - b*0.081312f), fullRange);\n    }\n  }\n\n  if (has_alpha) {\n    for (int y=0;y<height;y++) {\n      memcpy(&out_a[y*out_a_stride], &in_a[y*in_a_stride], width*2);\n    }\n  }\n\n  return outimg;\n}",
     "fuzz_target": "/out/file-fuzzer"
+  },
+  {
+    "cve_id": "arvo:368",
+    "docker_image_vul": "n132/arvo:368-vul",
+    "docker_image_fix": "n132/arvo:368-fix",
+    "crash_description": "Heap-use-after-free READ (1 byte) in cff_blend_doBlend() (src/cff/cffload.c), reached via cff_parser_run -> cff_load_private_dict while parsing a CFF Private DICT with two or more consecutive `blend` operators. Each blend op may need to grow subFont->blend_stack via FT_REALLOC; when realloc moves the buffer, blend_top is correctly reset, but parser->stack entries from a *previous* blend op in the same DICT still point into the old (now-freed) allocation. A second blend op in a row reads through one of those stale parser->stack pointers, hitting freed heap memory. Fix adjusts every parser->stack pointer that fell inside the old buffer by the realloc's address delta.",
+    "sanitizer_type": "asan",
+    "vuln_class": "use_after_free",
+    "exit_code_vul": 1,
+    "real_crash": true,
+    "crash_log_path": "sample_crash_logs/arvo_368_crash.txt",
+    "poc_bucket": "medium",
+    "target_source": "FT_LOCAL_DEF( FT_Error )\ncff_blend_doBlend( CFF_SubFont  subFont,\n                    CFF_Parser   parser,\n                    FT_UInt      numBlends )\n{\n  ...\n  size = 5 * numBlends;\n  if ( subFont->blend_used + size > subFont->blend_alloc )\n  {\n    /* VULNERABLE: no save of old blend_stack pointer, no adjustment\n       of parser->stack entries after FT_REALLOC moves the buffer */\n    if ( FT_REALLOC( subFont->blend_stack,\n                      subFont->blend_alloc,\n                      subFont->blend_alloc + size ) )\n      goto Exit;\n    subFont->blend_top    = subFont->blend_stack + subFont->blend_used;\n    subFont->blend_alloc += size;\n  }\n  subFont->blend_used += size;\n  ...\n  for ( i = 0; i < numBlends; i++ )\n  {\n    ...\n    parser->stack[i + base] = subFont->blend_top;   /* stale after 2nd blend */\n    *subFont->blend_top++             = 255;\n    *((FT_UInt32*)subFont->blend_top) = (FT_UInt32)sum;\n    subFont->blend_top               += 4;\n  }\n  ...\n}",
+    "fuzz_target": "/out/ftfuzzer",
+    "fix_commit": "bdec162d921d69f63b992a74b32542b973a6c117"
   }
 ]

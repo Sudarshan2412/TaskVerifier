@@ -3,6 +3,7 @@ agent_loop.py — Central retry loop for single-CVE vulnerability reproduction.
 """
 
 import logging
+import re
 import os
 import time
 import hashlib
@@ -11,13 +12,12 @@ from dataclasses import dataclass, field
 from logger import NullStepLogger
 
 from agent import llm_client
-from agent.prompt_builder import (
-    build_initial_prompt,
-    build_feedback_prompt,
-    load_few_shot_examples,
-)
+from agent.prompt_builder import build_initial_prompt,build_feedback_prompt,load_few_shot_examples
+
 from agent.code_extractor import extract_code, ExtractionError
 from agent.context_manager import ContextManager
+from agent.fact_accumulator import FactAccumulator
+from agent.retry_memory import RetryMemory
 from verifier import VerifierPipeline
 from verifier.hallucination_detector import detect_hallucinations
 
@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 INTER_ATTEMPT_SLEEP_SECONDS = float(os.environ.get("INTER_ATTEMPT_SLEEP_SECONDS", "0"))
 FEW_SHOT_PATH = "few_shot_examples.json"
-
 
 def _check_llm_client_has_history_support() -> None:
     try:
@@ -50,6 +49,61 @@ class AgentResult:
     failure_reason: str
     transcript: list[dict] = field(default_factory=list)
     hallucinated_symbols_per_attempt: list[list[str]] = field(default_factory=list)
+
+
+
+def _extract_approach_note(poc_code: str, feedback_text: str) -> str:
+    """
+    Extract a one-line structural note about what the PoC attempted.
+
+    Used to populate RetryMemory with enough detail to distinguish attempts
+    that all resulted in "no_crash" but tried different internal structures.
+
+    Format-agnostic: uses generic patterns for operator values, version numbers,
+    and format magic strings.  Does not contain any CVE-specific logic.
+
+    Returns a string of up to 120 chars, or "" if nothing useful is found.
+    """
+    notes = []
+
+    # Operator or opcode value mentioned in feedback
+    # Match "operator ... 0x17" or "opcode ... 0x17" with up to 3 words between
+    op_match = re.search(
+        r'\bop(?:code|erator)?(?:\s+\S+){0,3}?\s+(0x[0-9a-fA-F]{1,4})\b',
+        feedback_text, re.IGNORECASE
+    )
+    if not op_match:
+        # Also match simple "op=0x17" or "operator 0x17"
+        op_match = re.search(
+            r'\bop(?:code|erator)?\s*=?\s*(0x[0-9a-fA-F]{1,4})\b',
+            feedback_text, re.IGNORECASE
+        )
+    if op_match:
+        notes.append(f"op={op_match.group(1)}")
+
+    # Version number (CFF1/CFF2, table tag, format version integer)
+    ver_match = re.search(
+        r'\b(?:version|major|minor|tag)\s*([12]|0x[0-9a-fA-F]{4,8}|\'[\w ]{1,8}\')\b',
+        feedback_text, re.IGNORECASE
+    )
+    if ver_match:
+        notes.append(f"ver={ver_match.group(1)}")
+
+    # 4-char format tags in single quotes (e.g. 'CFF ', 'OTTO', 'CFF2')
+    tag_matches = re.findall(r"'([A-Z][A-Z0-9 ]{0,3})'", feedback_text)
+    if tag_matches:
+        notes.append(f"tags={'|'.join(tag_matches[:3])}")
+
+    # Key structural keywords that distinguish approaches
+    for kw in ("INDEX", "vstore", "FDSelect", "CharStrings", "PrivateDict", "GlyphTable",
+               "endchar", "vsindex", "blend", "FDArray", "Charstring"):
+        if re.search(r'\b' + kw + r'\b', feedback_text, re.IGNORECASE):
+            notes.append(kw)
+            break  # one keyword is enough for disambiguation
+
+    if not notes:
+        return ""
+    return (", ".join(notes))[:120]
 
 
 def run_agent(
@@ -86,6 +140,8 @@ def run_agent(
     last_feedback_text = ""
     last_hallucinated_symbols = []
     seen_poc_hashes: set[str] = set()
+    fact_acc = FactAccumulator()  # accumulates confirmed facts across all retry attempts
+    retry_mem = RetryMemory()  # tracks failed approaches to prevent cycling
 
     cve_id = cve_entry.get("id") or cve_entry.get("cve_id", "unknown")
     logger.info(f"Starting agent loop for CVE {cve_id} with max_attempts={max_attempts}")
@@ -105,7 +161,9 @@ def run_agent(
                     feedback_text=last_feedback_text,
                     hallucinated_symbols=last_hallucinated_symbols,
                     previous_poc=last_poc,
-                    attempt_number=attempt - 1
+                    attempt_number=attempt - 1,
+                    confirmed_facts=fact_acc.render(),
+                    failed_approaches=retry_mem.render(),
                 )
                 sl.log_prompt_built("feedback", len(prompt))
                 # NEW: log what feedback is being sent so you can follow the loop
@@ -156,11 +214,16 @@ def run_agent(
             if poc_hash in seen_poc_hashes:
                 # Model is spinning — force a different temperature on the next call
                 logger.warning(f"CVE {cve_id}: Attempt {attempt}: LLM regenerated identical PoC. Forcing deviation.")
+                prior_summary = retry_mem.render()
+                if prior_summary:
+                    prior_summary = f"\n\nHere is a summary of approaches that have ALREADY FAILED:\n{prior_summary}\n"
+                
                 last_feedback_text = (
                     "CRITICAL: You generated the exact same code as a previous attempt. "
                     "This is not acceptable. You MUST try a completely different approach — "
                     "different payload structure, different vulnerability trigger path, different format. "
                     "Do not repeat any previously tried approach."
+                    f"{prior_summary}"
                 )
                 transcript.append({
                     "attempt": attempt, "prompt": prompt, "raw_response": raw_response,
@@ -209,7 +272,8 @@ def run_agent(
             result = verifier.verify(
                 poc_code=poc_code,
                 cve_entry=cve_entry,
-                previous_feedback=last_feedback_text
+                previous_feedback=last_feedback_text,
+                failed_approaches=retry_mem.render()
             )
             logger.debug(f"CVE {cve_id}: Attempt {attempt} verifier status: {result.status}")
 
@@ -259,7 +323,42 @@ def run_agent(
                 hallucinated_symbols_per_attempt=hallucinated_per_attempt
             )
 
-        last_feedback_text = result.feedback
+        # If compile failed due to a hallucinated external library,
+        # override the generic feedback with an environment-specific message.
+        # The critic LLM currently tells the model to "apt-get install zlib1g-dev"
+        # which is impossible inside the build environment.
+        ENV_UNAVAILABLE = {"zlib.h", "png.h", "jpeglib.h", "openssl/md5.h", "openssl"}
+        if (result.status == "compile_fail"
+                and hallucinated_symbols
+                and ENV_UNAVAILABLE.intersection(hallucinated_symbols)):
+            unavailable = list(ENV_UNAVAILABLE.intersection(hallucinated_symbols))
+            last_feedback_text = (
+                f"Compilation failed because {unavailable} are not available "
+                f"in the build environment and cannot be installed.\n"
+                f"You must implement the required functionality (e.g. CRC32) "
+                f"inline in pure C using only the standard library (stdio.h, stdlib.h, string.h).\n"
+                f"Original error:\n{result.feedback}"
+            )
+        else:
+            last_feedback_text = result.feedback
+
+        # ── FACT ACCUMULATION ─────────────────────────────────────────────────
+        # Extract any confirmed constants, offsets, or operator codes the critic
+        # discovered this round and carry them into the next retry prompt.
+        fact_acc.update(last_feedback_text)
+
+        # ── RETRY MEMORY ─────────────────────────────────────────────────────
+        # Record this failed approach so the agent doesn't repeat it.
+        if result.status != "crash":
+            first_line = last_feedback_text.split("\n")[0].strip()
+            approach_summary = (first_line[:80] if first_line else last_feedback_text[:80])
+            structure_note = _extract_approach_note(poc_code, last_feedback_text)
+            retry_mem.record_with_notes(
+                attempt=attempt,
+                approach=approach_summary,
+                reason=result.status,
+                structure_notes=structure_note,
+            )
 
         # ── TRANSCRIPT ENTRY ─────────────────────────────────────────────────
         exec_details = result.details.get("execution", {}) if hasattr(result, "details") else {}
