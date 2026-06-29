@@ -13,7 +13,7 @@ from verifier import verify
 
 def test_compiler_valid_code():
     """Valid C code should compile successfully."""
-    valid_c = "#include \nint main(){ printf(\"hi\"); return 0; }"
+    valid_c = "#include <stdio.h>\nint main(){ printf(\"hi\"); return 0; }"
     result = compile_poc(valid_c, cve_entry={})
     assert result['success'] == True
     assert result['binary_path'] is not None

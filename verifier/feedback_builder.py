@@ -278,11 +278,25 @@ def build_feedback(
         # Add explicit interpretation of the silence so the agent and critic
         # understand that "no output" means "parser rejected before vulnerable code."
         exit_code = execution_result.get("exit_code", 0)
-        silence_note = (
-            f"\n[VERIFIER NOTE] The target binary exited normally (exit code {exit_code}) "
-            "without triggering any sanitizer error. The vulnerable code path was not reached. "
-            "Use SEARCH to investigate why.\n"
-        )
+
+        # Signal-based crashes (exit code > 128) are NOT "exiting normally" —
+        # they indicate the process was killed by an OS signal (e.g. SIGSEGV, SIGABRT).
+        if exit_code > 128:
+            signal_num = exit_code - 128
+            signal_names = {11: "SIGSEGV", 6: "SIGABRT", 8: "SIGFPE", 4: "SIGILL", 7: "SIGBUS"}
+            sig_name = signal_names.get(signal_num, f"signal {signal_num}")
+            silence_note = (
+                f"\n[VERIFIER NOTE] The target binary was killed by {sig_name} (exit code {exit_code}). "
+                "A crash occurred but no sanitizer output was captured. "
+                "This may indicate the binary is not instrumented with a sanitizer, "
+                "or the crash happened in un-instrumented code.\n"
+            )
+        else:
+            silence_note = (
+                f"\n[VERIFIER NOTE] The target binary exited normally (exit code {exit_code}) "
+                "without triggering any sanitizer error. The vulnerable code path was not reached. "
+                "Use SEARCH to investigate why.\n"
+            )
         if fuzzer_output:
             fuzzer_output = silence_note + "\nTarget output:\n" + fuzzer_output
         else:

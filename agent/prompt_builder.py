@@ -245,6 +245,13 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
         f"Expected crash: {crash_description}\n"
     )
     
+    if cve_entry.get("sanitizer_type") == "none":
+        prompt += (
+            "\nNote: This binary has NO sanitizer instrumentation (no ASAN/MSAN/UBSAN). "
+            "A successful crash will produce a raw signal (e.g., segfault, abort) "
+            "with no sanitizer output on stderr.\n"
+        )
+    
     # Pull additional source context from the container image.
     # General-purpose: parses the crash stacktrace, greps the container for
     # those functions.  After dataset_sanitizer redacts stack frame identifiers,
@@ -360,6 +367,13 @@ def build_feedback_prompt(
         f"Verifier feedback:\n"
         f"{feedback_text}\n"
     )
+    
+    if cve_entry.get("sanitizer_type") == "none":
+        prompt += (
+            "\nNote: This binary has NO sanitizer instrumentation (no ASAN/MSAN/UBSAN). "
+            "A successful crash will produce a raw signal (e.g., segfault, abort) "
+            "with no sanitizer output on stderr.\n"
+        )
     
     # ── Hallucinated symbols ──────────────────────────────────────────────
     if hallucinated_symbols:
