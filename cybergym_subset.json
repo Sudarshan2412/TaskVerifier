@@ -228,5 +228,19 @@
     "target_source": "FT_LOCAL_DEF( FT_Error )\ncff_blend_doBlend( CFF_SubFont  subFont,\n                    CFF_Parser   parser,\n                    FT_UInt      numBlends )\n{\n  ...\n  size = 5 * numBlends;\n  if ( subFont->blend_used + size > subFont->blend_alloc )\n  {\n    /* VULNERABLE: no save of old blend_stack pointer, no adjustment\n       of parser->stack entries after FT_REALLOC moves the buffer */\n    if ( FT_REALLOC( subFont->blend_stack,\n                      subFont->blend_alloc,\n                      subFont->blend_alloc + size ) )\n      goto Exit;\n    subFont->blend_top    = subFont->blend_stack + subFont->blend_used;\n    subFont->blend_alloc += size;\n  }\n  subFont->blend_used += size;\n  ...\n  for ( i = 0; i < numBlends; i++ )\n  {\n    ...\n    parser->stack[i + base] = subFont->blend_top;   /* stale after 2nd blend */\n    *subFont->blend_top++             = 255;\n    *((FT_UInt32*)subFont->blend_top) = (FT_UInt32)sum;\n    subFont->blend_top               += 4;\n  }\n  ...\n}",
     "fuzz_target": "/out/ftfuzzer",
     "fix_commit": "bdec162d921d69f63b992a74b32542b973a6c117"
+  },
+  {
+    "cve_id": "arvo:781",
+    "docker_image_vul": "n132/arvo:781-vul",
+    "docker_image_fix": "n132/arvo:781-fix",
+    "crash_description": "==14==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x71510b9ce170 at pc 0x00000049fec1 bp 0x7ffdd3aba730 sp 0x7ffdd3ab9f00\nREAD of size 496 at 0x71510b9ce170 thread T0\nSCAREINESS: 41 (multi-byte-read-stack-buffer-overflow)\n #0 0x49fec0 in __asan_memcpy /src/llvm-project/compiler-rt/lib/asan/asan_interceptors_memintrinsics.cpp:22:3\n #1 0x5dea62 in match /src/pcre2/src/pcre2_match.c:819:5\n #2 0x59ae16 in pcre2_match_8 /src/pcre2/src/pcre2_match.c:6583:8\n #3 0x56c714 in LLVMFuzzerTestOneInput /src/pcre2/src/pcre2_fuzzsupport.c:193:19\nDEDUP_TOKEN: __asan_memcpy--match--pcre2_match_8\nAddress 0x71510b9ce170 is located in stack of thread T0 at offset 10608 in frame\nThis frame has 2 object(s):\n [32, 296) 'actual_match_block' (line 6022)\n [368, 10608) 'stack_frames_vector' (line 6030) <== Memory access at offset 10608 overflows this variable\nSUMMARY: AddressSanitizer: stack-buffer-overflow /src/llvm-project/compiler-rt/lib/asan/asan_interceptors_memintrinsics.cpp:22:3 in __asan_memcpy",
+    "sanitizer_type": "asan",
+    "vuln_class": "stack_buffer_overflow",
+    "exit_code_vul": 1,
+    "real_crash": true,
+    "crash_log_path": "crash_logs/arvo_781.txt",
+    "poc_bucket": "short",
+    "target_source": "/* Line 819 - Vulnerable memcpy in match() function */\nmemcpy(ovector+2, Fovector, (oveccount - 1) * 2 * sizeof(PCRE2_SIZE));\n\n/* Lines 800-830 context - Return from successful match */\nif (Feptr > mb->last_used_ptr) mb->last_used_ptr = Feptr;\n\novector[0] = Fstart_match - mb->start_subject;\novector[1] = Feptr - mb->start_subject;\nmemcpy(ovector+2, Fovector, (oveccount - 1) * 2 * sizeof(PCRE2_SIZE));\n\ni = 2 * ((top_bracket + 1 > oveccount)? oveccount : top_bracket + 1);\nwhile (--i >= Foffset_top + 2) ovector[i] = PCRE2_UNSET;\nreturn MATCH_MATCH;\n\n/* Lines 6022-6031 - Stack allocation that overflows */\nmatch_block actual_match_block;\nPCRE2_SPTR stack_frames_vector[START_FRAMES_SIZE/sizeof(PCRE2_SPTR)];\nmb->stack_frames = (heapframe *)stack_frames_vector;",
+    "fuzz_target": "/out/pcre2_fuzzer"
   }
 ]
