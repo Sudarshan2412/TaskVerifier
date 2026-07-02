@@ -13,9 +13,28 @@ BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Model Selection
 DEEPSEEK_MODEL = "deepseek/deepseek-v4-flash"
+DEEPSEEK_PRO_MODEL = "deepseek/deepseek-v4-pro"
 NEMOTRON_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+NEMOTRON_ULTRA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
+MINIMAX_M3_MODEL = "minimax/minimax-m3"
+MINIMAX_M25_MODEL = "minimax/minimax-m2.5"
+QWEN_37_PLUS_MODEL = "qwen/qwen-3.7-plus"
+KIMI_K26_MODEL = "moonshotai/kimi-k2.6"
+
 DEFAULT_MODEL = DEEPSEEK_MODEL
 DEFAULT_MAX_RESPONSE_TOKENS = int(os.environ.get("MAX_RESPONSE_TOKENS", "16384"))
+
+# Allowed Models Map for reference or dynamic routing
+ALLOWED_MODELS = {
+    "deepseek-v4-flash": DEEPSEEK_MODEL,
+    "deepseek-v4-pro": DEEPSEEK_PRO_MODEL,
+    "nemotron-3-super": NEMOTRON_MODEL,
+    "nemotron-3-ultra": NEMOTRON_ULTRA_MODEL,
+    "minimax-m3": MINIMAX_M3_MODEL,
+    "minimax-m2.5": MINIMAX_M25_MODEL,
+    "qwen3.7-plus": QWEN_37_PLUS_MODEL,
+    "kimi-k2.6": KIMI_K26_MODEL
+}
 
 
 def _extract_message_content(choice: dict) -> str | None:

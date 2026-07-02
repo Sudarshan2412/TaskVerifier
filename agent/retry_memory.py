@@ -39,7 +39,7 @@ from dataclasses import dataclass
 
 _MAX_ENTRIES = 8
 _MAX_APPROACH_LEN = 80
-_MAX_REASON_LEN = 120
+_MAX_REASON_LEN = 80
 _MAX_STRUCTURE_NOTE_LEN = 120
 
 

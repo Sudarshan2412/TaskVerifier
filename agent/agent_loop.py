@@ -12,12 +12,19 @@ from dataclasses import dataclass, field
 from logger import NullStepLogger
 
 from agent import llm_client
-from agent.prompt_builder import build_initial_prompt,build_feedback_prompt,load_few_shot_examples
+from agent.prompt_builder import build_initial_prompt, build_feedback_prompt, build_iteration_prompt, load_few_shot_examples
 
 from agent.code_extractor import extract_code, ExtractionError
 from agent.context_manager import ContextManager
 from agent.fact_accumulator import FactAccumulator
 from agent.retry_memory import RetryMemory
+from agent.iteration_models import IterationRecord
+from agent.iteration_memory import IterationMemory
+from agent.failure_tracker import FailurePatternTracker, categorize_failure
+from agent.reasoning_enforcer import ReasoningEnforcer
+from agent.validator_interface import ValidatorRegistry, StructuralValidator
+from agent.feedback_normalizer import normalize_feedback
+
 from verifier import VerifierPipeline
 from verifier.hallucination_detector import detect_hallucinations
 
@@ -141,7 +148,16 @@ def run_agent(
     last_hallucinated_symbols = []
     seen_poc_hashes: set[str] = set()
     fact_acc = FactAccumulator()  # accumulates confirmed facts across all retry attempts
-    retry_mem = RetryMemory()  # tracks failed approaches to prevent cycling
+    retry_mem = RetryMemory()  # legacy retry memory (retained for backward compatibility)
+    
+    # New architecture components
+    iteration_mem = IterationMemory()
+    failure_tracker = FailurePatternTracker()
+    reasoning_enforcer = ReasoningEnforcer()
+    validator_registry = ValidatorRegistry()
+    validator_registry.register(StructuralValidator())
+    
+    last_normalized_feedback = None
 
     cve_id = cve_entry.get("id") or cve_entry.get("cve_id", "unknown")
     logger.info(f"Starting agent loop for CVE {cve_id} with max_attempts={max_attempts}")
@@ -156,7 +172,7 @@ def run_agent(
                 prompt = build_initial_prompt(cve_entry, few_shot_examples)
                 sl.log_prompt_built("initial", len(prompt))
             else:
-                prompt = build_feedback_prompt(
+                prompt = build_iteration_prompt(
                     cve_entry=cve_entry,
                     feedback_text=last_feedback_text,
                     hallucinated_symbols=last_hallucinated_symbols,
@@ -164,9 +180,11 @@ def run_agent(
                     attempt_number=attempt - 1,
                     confirmed_facts=fact_acc.render(),
                     failed_approaches=retry_mem.render(),
+                    normalized_feedback=last_normalized_feedback,
+                    iteration_memory=iteration_mem,
+                    failure_tracker=failure_tracker
                 )
                 sl.log_prompt_built("feedback", len(prompt))
-                # NEW: log what feedback is being sent so you can follow the loop
                 sl.log_feedback_sent(last_feedback_text, len(last_feedback_text))
         except Exception as e:
             logger.error(f"CVE {cve_id}: Failed to build prompt: {e}")
@@ -204,54 +222,182 @@ def run_agent(
         ctx.add_assistant_message(raw_response)
         ctx.log_context_usage()
 
-        # ── CODE EXTRACTION ──────────────────────────────────────────────────
-        try:
-            poc_code = extract_code(raw_response)
-            last_poc = poc_code
-            sl.log_extraction(True, len(poc_code))
-            
-            poc_hash = hashlib.md5(poc_code.encode()).hexdigest()
-            if poc_hash in seen_poc_hashes:
-                # Model is spinning — force a different temperature on the next call
-                logger.warning(f"CVE {cve_id}: Attempt {attempt}: LLM regenerated identical PoC. Forcing deviation.")
-                prior_summary = retry_mem.render()
-                if prior_summary:
-                    prior_summary = f"\n\nHere is a summary of approaches that have ALREADY FAILED:\n{prior_summary}\n"
-                
-                last_feedback_text = (
-                    "CRITICAL: You generated the exact same code as a previous attempt. "
-                    "This is not acceptable. You MUST try a completely different approach — "
-                    "different payload structure, different vulnerability trigger path, different format. "
-                    "Do not repeat any previously tried approach."
-                    f"{prior_summary}"
+        # ── REASONING ENFORCEMENT & EXTRACTION ────────────────────────────────
+        structured_reasoning = None
+        poc_code = ""
+        
+        if attempt > 1:
+            structured_reasoning = reasoning_enforcer.extract_reasoning(raw_response)
+            if not structured_reasoning:
+                logger.warning(f"CVE {cve_id}: Attempt {attempt}: LLM response missing structured reasoning.")
+                reasoning_issues = ["Response did not contain the required structured reasoning headings."]
+            else:
+                reasoning_issues = reasoning_enforcer.validate_reasoning(
+                    structured_reasoning, iteration_mem, last_feedback_text
                 )
+            
+            if reasoning_issues:
+                # Wasted attempt! LLM failed structured reasoning validation.
+                last_feedback_text = (
+                    "CRITICAL REASONING VALIDATION FAILED:\n" + 
+                    "\n".join(f"- {issue}" for issue in reasoning_issues) +
+                    "\nYou MUST provide structured reasoning before code generation. Please try again."
+                )
+                
+                last_normalized_feedback = {
+                    "failure_category": "reasoning_validation_failed",
+                    "failure_summary": "LLM failed structured reasoning validation.",
+                    "diagnostics": [
+                        {
+                            "severity": "error",
+                            "location": "reasoning",
+                            "reason": last_feedback_text,
+                            "possible_fix": "Follow the requested markdown heading structure and explicitly address prior errors."
+                        }
+                    ],
+                    "raw_feedback": last_feedback_text
+                }
+                
+                failure_tracker.record_failure("reasoning_validation_failed", attempt)
+                iteration_mem.add_record(IterationRecord(
+                    attempt=attempt,
+                    verifier_status="reasoning_validation_failed",
+                    failure_category="reasoning_validation_failed",
+                    root_cause="",
+                    strategy_description="Failed to provide valid structured reasoning",
+                    fixes_attempted=[],
+                    outcome="reasoning validation failed"
+                ))
+                
                 transcript.append({
                     "attempt": attempt, "prompt": prompt, "raw_response": raw_response,
-                    "extracted_poc": poc_code, "hallucinated_symbols": [],
-                    "verifier_status": "skip_duplicate", "verifier_stage": "",
+                    "extracted_poc": "", "hallucinated_symbols": [],
+                    "verifier_status": "reasoning_validation_failed", "verifier_stage": "reasoning",
                     "verifier_feedback": last_feedback_text, "fuzzer_output": "", "fuzzer_cmd": ""
                 })
                 hallucinated_per_attempt.append([])
+                
+                if attempt < max_attempts:
+                    time.sleep(INTER_ATTEMPT_SLEEP_SECONDS)
                 continue
-            seen_poc_hashes.add(poc_hash)
+                
+            poc_code = reasoning_enforcer.extract_code_after_reasoning(raw_response)
+        else:
+            try:
+                poc_code = extract_code(raw_response)
+            except ExtractionError as e:
+                poc_code = ""
+
+        # ── STATIC VALIDATION ────────────────────────────────────────────────
+        validation_results = []
+        if poc_code:
+            task_context = {"seen_poc_hashes": seen_poc_hashes}
+            validation_results = validator_registry.run_all(poc_code, task_context)
+            validation_failed = any(not vr.passed for vr in validation_results)
             
-        except ExtractionError as e:
-            sl.log_extraction(False, error=str(e))
-            transcript.append({
-                "attempt": attempt, "prompt": prompt, "raw_response": raw_response,
-                "extracted_poc": "", "hallucinated_symbols": [],
-                "verifier_status": "skip", "verifier_stage": "",
-                "verifier_feedback": "", "fuzzer_output": "", "fuzzer_cmd": ""
-            })
-            hallucinated_per_attempt.append([])
-            last_hallucinated_symbols = []
+            if validation_failed:
+                diags = []
+                for vr in validation_results:
+                    for diag in vr.diagnostics:
+                        if not diag.passed:
+                            diags.append(f"- [{diag.severity.upper()}] {diag.location}: {diag.reason}")
+                
+                last_feedback_text = (
+                    "CRITICAL STATIC VALIDATION FAILED:\n" +
+                    "\n".join(diags) +
+                    "\nPlease fix your code structure."
+                )
+                
+                last_normalized_feedback = {
+                    "failure_category": "static_validation_failed",
+                    "failure_summary": "Extracted code failed pluggable static validators.",
+                    "diagnostics": [],
+                    "raw_feedback": last_feedback_text
+                }
+                for vr in validation_results:
+                    for diag in vr.diagnostics:
+                        if not diag.passed:
+                            last_normalized_feedback["diagnostics"].append({
+                                "severity": diag.severity,
+                                "location": diag.location,
+                                "reason": diag.reason,
+                                "possible_fix": diag.possible_fix
+                            })
+                
+                failure_tracker.record_failure("static_validation_failed", attempt)
+                iteration_mem.add_record(IterationRecord(
+                    attempt=attempt,
+                    verifier_status="static_validation_failed",
+                    failure_category="static_validation_failed",
+                    root_cause=structured_reasoning.root_cause if structured_reasoning else "",
+                    strategy_description=structured_reasoning.validation_strategy if structured_reasoning else "First attempt",
+                    fixes_attempted=structured_reasoning.planned_changes if structured_reasoning else [],
+                    outcome="static validation failed"
+                ))
+                
+                transcript.append({
+                    "attempt": attempt, "prompt": prompt, "raw_response": raw_response,
+                    "extracted_poc": poc_code, "hallucinated_symbols": [],
+                    "verifier_status": "static_validation_failed", "verifier_stage": "validation",
+                    "verifier_feedback": last_feedback_text, "fuzzer_output": "", "fuzzer_cmd": ""
+                })
+                hallucinated_per_attempt.append([])
+                
+                if attempt < max_attempts:
+                    time.sleep(INTER_ATTEMPT_SLEEP_SECONDS)
+                continue
+
+        # If code extraction failed completely
+        if not poc_code:
+            sl.log_extraction(False, error="Code block missing or malformed")
+            
             last_feedback_text = (
                 "Your response did not contain extractable C code. "
                 "Output ONLY a single C program inside triple backticks (```c ... ```)."
             )
+            
+            last_normalized_feedback = {
+                "failure_category": "extraction_failed",
+                "failure_summary": "Did not contain extractable C code.",
+                "diagnostics": [
+                    {
+                        "severity": "error",
+                        "location": "extraction",
+                        "reason": last_feedback_text,
+                        "possible_fix": "Enclose C code block in triple backticks starting with ```c."
+                    }
+                ],
+                "raw_feedback": last_feedback_text
+            }
+            
+            failure_tracker.record_failure("extraction_failed", attempt)
+            iteration_mem.add_record(IterationRecord(
+                attempt=attempt,
+                verifier_status="extraction_failed",
+                failure_category="extraction_failed",
+                root_cause="",
+                strategy_description="No code block generated",
+                fixes_attempted=[],
+                outcome="code extraction failed"
+            ))
+            
+            transcript.append({
+                "attempt": attempt, "prompt": prompt, "raw_response": raw_response,
+                "extracted_poc": "", "hallucinated_symbols": [],
+                "verifier_status": "extraction_failed", "verifier_stage": "extraction",
+                "verifier_feedback": last_feedback_text, "fuzzer_output": "", "fuzzer_cmd": ""
+            })
+            hallucinated_per_attempt.append([])
+            
             if attempt < max_attempts:
                 time.sleep(INTER_ATTEMPT_SLEEP_SECONDS)
             continue
+
+        # Register hash to seen
+        poc_hash = hashlib.md5(poc_code.encode("utf-8", errors="ignore")).hexdigest()
+        seen_poc_hashes.add(poc_hash)
+        last_poc = poc_code
+        sl.log_extraction(True, len(poc_code))
 
         # ── HALLUCINATION DETECTION ──────────────────────────────────────────
         try:
@@ -292,7 +438,6 @@ def run_agent(
                 exec_message=exec_msg,
             )
 
-            # NEW: log docker execution detail if we got that far
             if exec_info:
                 fuzzer_cmd = exec_info.get("fuzzer_cmd", "")
                 fuzzer_out = exec_info.get("stderr", "") or exec_info.get("stdout", "")
@@ -323,41 +468,34 @@ def run_agent(
                 hallucinated_symbols_per_attempt=hallucinated_per_attempt
             )
 
-        # If compile failed due to a hallucinated external library,
-        # override the generic feedback with an environment-specific message.
-        # The critic LLM currently tells the model to "apt-get install zlib1g-dev"
-        # which is impossible inside the build environment.
-        ENV_UNAVAILABLE = {"zlib.h", "png.h", "jpeglib.h", "openssl/md5.h", "openssl"}
-        if (result.status == "compile_fail"
-                and hallucinated_symbols
-                and ENV_UNAVAILABLE.intersection(hallucinated_symbols)):
-            unavailable = list(ENV_UNAVAILABLE.intersection(hallucinated_symbols))
-            last_feedback_text = (
-                f"Compilation failed because {unavailable} are not available "
-                f"in the build environment and cannot be installed.\n"
-                f"You must implement the required functionality (e.g. CRC32) "
-                f"inline in pure C using only the standard library (stdio.h, stdlib.h, string.h).\n"
-                f"Original error:\n{result.feedback}"
-            )
-        else:
-            last_feedback_text = result.feedback
+        # ── FEEDBACK NORMALIZATION & TRACKING ─────────────────────────────────
+        last_normalized_feedback = normalize_feedback(result, validation_results)
+        last_feedback_text = result.feedback
+        
+        fail_category = last_normalized_feedback["failure_category"]
+        failure_tracker.record_failure(fail_category, attempt)
 
         # ── FACT ACCUMULATION ─────────────────────────────────────────────────
-        # Extract any confirmed constants, offsets, or operator codes the critic
-        # discovered this round and carry them into the next retry prompt.
         fact_acc.update(last_feedback_text)
 
-        # ── RETRY MEMORY ─────────────────────────────────────────────────────
-        # Record this failed approach so the agent doesn't repeat it.
+        # ── ITERATION / RETRY MEMORY ──────────────────────────────────────────
         if result.status != "crash":
+            iteration_mem.add_record(IterationRecord(
+                attempt=attempt,
+                verifier_status=result.status,
+                failure_category=fail_category,
+                root_cause=structured_reasoning.root_cause if structured_reasoning else "Initial attempt analysis",
+                strategy_description=structured_reasoning.validation_strategy if structured_reasoning else "First attempt",
+                fixes_attempted=structured_reasoning.planned_changes if structured_reasoning else [],
+                outcome=last_normalized_feedback["failure_summary"]
+            ))
+
             first_line = last_feedback_text.split("\n")[0].strip()
             approach_summary = (first_line[:80] if first_line else last_feedback_text[:80])
-            structure_note = _extract_approach_note(poc_code, last_feedback_text)
-            retry_mem.record_with_notes(
+            retry_mem.record(
                 attempt=attempt,
                 approach=approach_summary,
                 reason=result.status,
-                structure_notes=structure_note,
             )
 
         # ── TRANSCRIPT ENTRY ─────────────────────────────────────────────────
@@ -369,15 +507,12 @@ def run_agent(
             "extracted_poc": poc_code,
             "hallucinated_symbols": hallucinated_symbols,
             "verifier_status": result.status,
-            # BUG FIX: was result.details.get("stage","") which is always ""
-            # now correctly inferred from which sub-stage was reached
             "verifier_stage": (
                 "sanitizer"  if result.status == "crash"     else
                 "execution"  if exec_details                 else
                 "compiler"
             ),
             "verifier_feedback": result.feedback,
-            # NEW: capture fuzzer output and command for the Markdown report
             "fuzzer_output": (
                 exec_details.get("stderr", "") or exec_details.get("stdout", "")
             )[:800],

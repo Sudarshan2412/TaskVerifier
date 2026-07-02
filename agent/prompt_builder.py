@@ -301,7 +301,7 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
 
     return prompt
 
-def build_feedback_prompt(
+def build_iteration_prompt(
     cve_entry: dict,
     feedback_text: str,
     hallucinated_symbols: list,
@@ -309,54 +309,48 @@ def build_feedback_prompt(
     attempt_number: int,
     confirmed_facts: str = "",
     failed_approaches: str = "",
+    normalized_feedback: dict = None,
+    iteration_memory = None,
+    failure_tracker = None,
 ) -> str:
     """
-    Build a retry prompt after a previous attempt failed.
-    
-    Args:
-        cve_entry: Dict with keys: id, crash_description (at minimum)
-        feedback_text: Verifier feedback string (3-5 lines)
-        hallucinated_symbols: List of symbol names that don't exist in the source
-        previous_poc: The C code from the previous attempt
-        attempt_number: Which attempt this is (1-indexed)
-        confirmed_facts: Pre-rendered "CONFIRMED FACTS" block from FactAccumulator.
-                         Injected at the top of the prompt when non-empty.
-        failed_approaches: Pre-rendered "FAILED APPROACHES" block from RetryMemory.
-                           Injected after confirmed_facts when non-empty.
-        
-    Returns:
-        Formatted retry prompt string
-        
-    Raises:
-        KeyError: If required fields are missing from cve_entry
+    Constructs the enriched feedback prompt using the structured reasoning enforcer,
+    iteration memory, failure patterns, and normalized diagnostics.
     """
+    from agent.feedback_normalizer import format_diagnostics_for_prompt, normalize_feedback
+    from agent.reasoning_enforcer import ReasoningEnforcer
+    from verifier import VerifierResult
+
     # Validate required fields
     required_fields = ["id", "crash_description"]
     missing_fields = [field for field in required_fields if field not in cve_entry]
     if missing_fields:
         raise KeyError(f"cve_entry missing required fields: {missing_fields}")
-    
-    # Handle None hallucinated_symbols
-    if hallucinated_symbols is None:
-        hallucinated_symbols = []
-    
-    # Extract fields
+
     cve_id = cve_entry.get("id") or cve_entry.get("cve_id", "unknown")
-    crash_description = cve_entry["crash_description"]
+    crash_description = cve_entry.get("crash_description", "")
     fuzz_target = cve_entry.get("fuzz_target", "")
 
-    # ── Confirmed facts block (from FactAccumulator) ─────────────────────
-    # Injected first so it anchors the LLM before it reads any analysis.
+    # 1. Header and facts
     prompt = ""
     if confirmed_facts:
         prompt += f"{confirmed_facts}\n"
 
-    # ── Failed approaches block (from RetryMemory) ───────────────────────
-    # Injected after facts so the LLM knows what NOT to try.
-    if failed_approaches:
+    # 2. Iteration history summary
+    if iteration_memory:
+        summary = iteration_memory.get_compact_summary()
+        if summary:
+            prompt += f"{summary}\n"
+    elif failed_approaches:
         prompt += f"{failed_approaches}\n"
 
-    # ── Core retry context ────────────────────────────────────────────────
+    # 3. Repeated failure pattern escalation
+    if failure_tracker:
+        escalation = failure_tracker.get_escalation_prompt()
+        if escalation:
+            prompt += f"{escalation}\n"
+
+    # 4. Contextual summary of the failed attempt
     prompt += (
         f"You are continuing to work on CVE {cve_id}.\n"
         f"Target crash: {crash_description}\n\n"
@@ -364,18 +358,25 @@ def build_feedback_prompt(
         f"```c\n"
         f"{previous_poc}\n"
         f"```\n\n"
-        f"Verifier feedback:\n"
-        f"{feedback_text}\n"
     )
-    
+
+    # 5. Structured failure diagnostics
+    if normalized_feedback:
+        prompt += format_diagnostics_for_prompt(normalized_feedback)
+    else:
+        # Wrap raw text into default normalized structure for backward compatibility
+        res = VerifierResult("no_crash" if "no crash" in feedback_text.lower() else "compile_fail", feedback_text, {})
+        norm = normalize_feedback(res, [])
+        prompt += format_diagnostics_for_prompt(norm)
+
     if cve_entry.get("sanitizer_type") == "none":
         prompt += (
             "\nNote: This binary has NO sanitizer instrumentation (no ASAN/MSAN/UBSAN). "
             "A successful crash will produce a raw signal (e.g., segfault, abort) "
             "with no sanitizer output on stderr.\n"
         )
-    
-    # ── Hallucinated symbols ──────────────────────────────────────────────
+
+    # 6. Hallucinated symbols warnings
     if hallucinated_symbols:
         hallucination_section = (
             f"\nWARNING — Hallucinated symbols detected:\n"
@@ -385,33 +386,19 @@ def build_feedback_prompt(
         )
         prompt += hallucination_section
 
-    # ── Format hint (retry variant) ───────────────────────────────────────
-    # Looked up from the same registry used by build_initial_prompt, so hints
-    # are NEVER silently dropped on retry.  The retry variant is shorter to
-    # save tokens; it reinforces the most common structural mistake for the
-    # given file format.
+    # 7. Format hint (retry variant)
     if fuzz_target:
         retry_hint = get_format_hint(fuzz_target, retry=True)
         if retry_hint:
             prompt += f"\n{retry_hint}"
 
-    # ── Mandatory analysis gate ───────────────────────────────────────────
-    # Forces the generator LLM to reason about WHY the previous attempt failed
-    # before producing new code.  This is format-agnostic and applies to every
-    # retry regardless of vulnerability class.
-    prompt += (
-        "\n=== ANALYSIS REQUIRED BEFORE CODE ===\n"
-        "Before writing any C code, write one short paragraph that answers:\n"
-        "  1. Exactly why the previous payload did NOT trigger the crash.\n"
-        "  2. What specific change you are making and why it will fix the problem.\n"
-        "Do NOT skip this analysis.  Do NOT just restate the verifier feedback.\n"
-        "Write your analysis, then output the corrected C code.\n"
-        "======================================\n"
-    )
+    # 8. Structured reasoning enforcement instructions
+    enforcer = ReasoningEnforcer()
+    prompt += f"\n{enforcer.build_reasoning_instructions()}"
 
-    # ── Final instruction ─────────────────────────────────────────────────
+    # 9. Output constraints
     prompt += (
-        f"\nWrite your analysis paragraph first (as required above), then output the corrected C code inside triple backticks."
+        f"\nWrite your structured reasoning sections first, then output the corrected C code inside triple backticks."
         "\n\nCRITICAL OUTPUT & ENVIRONMENT CONSTRAINTS:\n"
         "- TARGET ARCHITECTURE: The target is a 64-bit Linux container. Pointers and size_t are 64-bit.\n"
         "- INTEGER OVERFLOWS & OOM: The container has strictly 256MB of RAM. Massive allocations (e.g., 4GB) will cause silent OOM kills. "
@@ -423,8 +410,32 @@ def build_feedback_prompt(
         "- Instead, write the payload using a loop or fprintf/fputc calls.\n"
         "- The generator MUST write its output to exactly '/tmp/poc' (no extension).\n"
     )
-    
+
     return prompt
+
+
+def build_feedback_prompt(
+    cve_entry: dict,
+    feedback_text: str,
+    hallucinated_symbols: list,
+    previous_poc: str,
+    attempt_number: int,
+    confirmed_facts: str = "",
+    failed_approaches: str = "",
+) -> str:
+    """
+    Backward-compatible entry point for build_feedback_prompt.
+    Calls build_iteration_prompt with fallback values.
+    """
+    return build_iteration_prompt(
+        cve_entry=cve_entry,
+        feedback_text=feedback_text,
+        hallucinated_symbols=hallucinated_symbols,
+        previous_poc=previous_poc,
+        attempt_number=attempt_number,
+        confirmed_facts=confirmed_facts,
+        failed_approaches=failed_approaches
+    )
 
 
 if __name__ == "__main__":

@@ -68,7 +68,7 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
         "constant",
         re.compile(
             _IDENT +
-            r"\s+(?:confirmed(?:\s+as)?|verified(?:\s+as)?|defined(?:\s+as)?)\s*" +
+            r"\s+(?:confirmed(?:\s+as)?|verified(?:\s+as)?|defined(?:\s+as)?|is|equals?|equals?\s+to|=)\s*" +
             _NUM,
             re.IGNORECASE,
         ),
@@ -95,7 +95,7 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
         "constant",
         re.compile(
             r"([A-Za-z][A-Za-z0-9_]*(?:\s+[A-Za-z][A-Za-z0-9_]*){1,3})"
-            r"\s+(?:confirmed(?:\s+as)?|verified(?:\s+as)?|defined(?:\s+as)?)\s*" +
+            r"\s+(?:confirmed(?:\s+as)?|verified(?:\s+as)?|defined(?:\s+as)?|is|equals?|equals?\s+to|=)\s*" +
             _NUM,
             re.IGNORECASE,
         ),
@@ -110,7 +110,7 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
         re.compile(
             r"(?:offset|at byte|at position)\s+(?:of\s+)?"
             r"([A-Za-z0-9_\s]{3,30}?)\s+"
-            r"(?:confirmed(?:\s+as)?|verified(?:\s+as)?)\s*" + _NUM,
+            r"(?:confirmed(?:\s+as)?|verified(?:\s+as)?|is|equals?|equals?\s+to|=)\s*" + _NUM,
             re.IGNORECASE,
         ),
     ),
@@ -124,7 +124,7 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
         re.compile(
             r"(?:operator|opcode)\s+(?:for\s+)?"
             r"([A-Za-z_][A-Za-z0-9_\s]{1,30}?)\s+"
-            r"(?:confirmed(?:\s+as)?|verified(?:\s+as)?)\s*" + _NUM,
+            r"(?:confirmed(?:\s+as)?|verified(?:\s+as)?|is|equals?|equals?\s+to|=)\s*" + _NUM,
             re.IGNORECASE,
         ),
     ),
