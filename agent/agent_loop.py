@@ -59,8 +59,8 @@ def _extract_approach_note(poc_code: str, feedback_text: str) -> str:
     Used to populate RetryMemory with enough detail to distinguish attempts
     that all resulted in "no_crash" but tried different internal structures.
 
-    Format-agnostic: uses generic patterns for operator values, version numbers,
-    and format magic strings.  Does not contain any CVE-specific logic.
+    Format-agnostic: uses generic patterns for hex constants, version numbers,
+    and 4-character format tags.  Does not contain any parser-specific or CVE-specific logic.
 
     Returns a string of up to 120 chars, or "" if nothing useful is found.
     """
@@ -94,12 +94,18 @@ def _extract_approach_note(poc_code: str, feedback_text: str) -> str:
     if tag_matches:
         notes.append(f"tags={'|'.join(tag_matches[:3])}")
 
-    # Key structural keywords that distinguish approaches
-    for kw in ("INDEX", "vstore", "FDSelect", "CharStrings", "PrivateDict", "GlyphTable",
-               "endchar", "vsindex", "blend", "FDArray", "Charstring"):
-        if re.search(r'\b' + kw + r'\b', feedback_text, re.IGNORECASE):
-            notes.append(kw)
-            break  # one keyword is enough for disambiguation
+    # Generic hex constants (format-agnostic — any binary format uses these)
+    hex_matches = re.findall(r'0x[0-9a-fA-F]{2,}', feedback_text)
+    if hex_matches:
+        unique_hex = list(dict.fromkeys(hex_matches))[:4]
+        notes.append("hex:" + ",".join(unique_hex))
+
+    # 4-character format tags inside quotes or after '='/':' (e.g. 'ftyp', 'mdat', 'CFF ')
+    tag_matches = re.findall(r'(?:[=:\"\'\s])([A-Za-z][A-Za-z0-9 ]{3})(?:[\"\'\s,;])', feedback_text)
+    if tag_matches:
+        unique_tags = list(dict.fromkeys(t.strip() for t in tag_matches if t.strip()))[:3]
+        if unique_tags:
+            notes.append("tag:" + "|".join(unique_tags))
 
     if not notes:
         return ""

@@ -48,14 +48,37 @@ class FormatHintEntry:
     retry_hint : str | None
         Injected into EVERY retry prompt.  If None, falls back to initial_hint.
         Use a shorter, reminder-style version to save tokens on retries.
+    max_tokens : int
+        Soft token cap for this hint (estimated at 4 chars/token).
+        Hints longer than this are truncated at the last sentence boundary.
+        Default 600 tokens; set lower for very long hints (e.g. CFF = 400).
     """
     patterns: tuple[str, ...]
     initial_hint: str
     retry_hint: str | None = None
+    max_tokens: int = 600
 
     def get_retry_hint(self) -> str:
         """Return the retry-specific hint, falling back to the initial hint."""
         return self.retry_hint if self.retry_hint is not None else self.initial_hint
+
+
+def _truncate_hint(hint: str, max_tokens: int) -> str:
+    """
+    Truncate *hint* to approximately *max_tokens* (estimated at 4 chars/token).
+    Truncates at the last sentence boundary ('. ') before the character limit
+    to avoid cutting in the middle of a structural requirement.
+
+    Format-agnostic: applies to any hint regardless of content.
+    """
+    char_limit = max_tokens * 4
+    if len(hint) <= char_limit:
+        return hint
+    truncated = hint[:char_limit]
+    last_sentence = truncated.rfind(". ")
+    if last_sentence > char_limit // 2:
+        truncated = truncated[:last_sentence + 1]
+    return truncated + "\n[Format hint truncated for token budget]"
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +234,7 @@ FORMAT_HINTS: list[FormatHintEntry] = [
             "• Top DICT INDEX offset[1] = (number of data bytes) + 1.\n"
             "• Use ftell() for every offset — never hardcode byte positions.\n"
         ),
+        max_tokens=400,  # CFF hint is ~100 lines; cap to avoid dominating prompt budget
     ),
 
     # ── HEIF / ISO Base Media ──────────────────────────────────────────────
@@ -402,6 +426,7 @@ def get_format_hint(fuzz_target: str, *, retry: bool = False) -> str | None:
 
     for entry in FORMAT_HINTS:
         if any(pat in name for pat in entry.patterns):
-            return entry.get_retry_hint() if retry else entry.initial_hint
+            hint = entry.get_retry_hint() if retry else entry.initial_hint
+            return _truncate_hint(hint, entry.max_tokens)
 
     return None

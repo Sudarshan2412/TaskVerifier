@@ -140,18 +140,10 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
         ),
     ),
 
-    # ── Crash function ──────────────────────────────────────────────────────
-    # Matches:
-    #   the vulnerable function is cff_blend_doBlend
-    #   crash occurs in mpz_mmod
-    (
-        "crash_function",
-        re.compile(
-            r"(?:vulnerable function|crash occurs?\s+in|crash site)\s+(?:is\s+)?`?"
-            r"([A-Za-z_]\w+)`?",
-            re.IGNORECASE,
-        ),
-    ),
+    # NOTE: crash_function pattern intentionally REMOVED.
+    # After dataset_sanitizer.redact_stacktrace_frames() runs, the critic
+    # cannot independently verify any function name against the stacktrace.
+    # Locking in a hallucinated function name is more harmful than no fact.
 ]
 
 
