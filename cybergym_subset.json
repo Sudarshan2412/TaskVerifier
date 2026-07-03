@@ -47,15 +47,15 @@
     "cve_id": "arvo:10147",
     "docker_image_vul": "n132/arvo:10147-vul",
     "docker_image_fix": "n132/arvo:10147-fix",
-    "crash_description": "",
-    "sanitizer_type": "unknown",
-    "vuln_class": "other",
-    "exit_code_vul": 0,
-    "real_crash": false,
+    "crash_description": "Segmentation fault (core dumped)",
+    "sanitizer_type": "none",
+    "vuln_class": "segfault",
+    "exit_code_vul": 139,
+    "real_crash": true,
     "crash_log_path": "sample_crash_logs/arvo_10147_crash.txt",
     "poc_bucket": "short",
     "target_source": "static MagickPassFail IsDCM(const unsigned char *magick,const size_t length)\n{\n  if (length < 132)\n    return(False);\n  if (LocaleNCompare((char *) (magick+128),\"DICM\",4) == 0)\n    return(True);\n  return(False);\n}\n\nstatic MagickPassFail DCM_InitDCM(DicomStream *dcm,int verbose)\n{\n  (void) memset(dcm,0,sizeof(*dcm));\n  dcm->columns=0;\n  dcm->rows=0;\n  dcm->samples_per_pixel=1;\n  dcm->bits_allocated=8;\n  dcm->significant_bits=0;\n  dcm->high_bit=0;\n  dcm->bytes_per_pixel=1;\n  dcm->max_value_in=255;\n  dcm->max_value_out=255;\n  dcm->pixel_representation=0;\n  dcm->transfer_syntax=DCM_TS_IMPL_LITTLE;\n  dcm->interlace=0;\n  dcm->msb_state=DCM_MSB_LITTLE;\n  dcm->phot_interp=DCM_PI_MONOCHROME2;\n  dcm->window_center=0;\n  dcm->window_width=0;\n  dcm->rescale_intercept=0;\n  dcm->rescale_slope=1;\n  dcm->number_scenes=1;\n  dcm->data=NULL;\n  dcm->funcReadShort=ReadBlobLSBShort;\n  dcm->funcReadLong=ReadBlobLSBLong;\n  dcm->explicit_file=False;\n  dcm->verbose=verbose;\n  return MagickPass;\n}",
-    "fuzz_target": "/out/coder_DCM_fuzzer"
+    "fuzz_target": "/out/coder_JNX_fuzzer"
   },
   {
     "cve_id": "arvo:10252",
@@ -213,5 +213,34 @@
     "poc_length_bytes": 817,
     "target_source": "for (int y=0;y<height;y++) {\n    for (int x=0;x<width;x++) {\n      float r = in_r[y*in_r_stride + x];\n      float g = in_g[y*in_g_stride + x];\n      float b = in_b[y*in_b_stride + x];\n\n      out_y[y*out_y_stride + x] = (Pixel)clip((int32_t)(r*0.299f + g*0.587f + b*0.114f), fullRange);\n    }\n  }\n\n  for (int y=0;y<height;y+=subV) {\n    for (int x=0;x<width;x+=subH) {\n      float r = in_r[y*in_r_stride + x];\n      float g = in_g[y*in_g_stride + x];\n      float b = in_b[y*in_b_stride + x];\n\n      out_cb[(y/subV)*out_cb_stride + (x/subH)] = (Pixel)clip(halfRange + (int32_t)(-r*0.168736f - g*0.331264f + b*0.5f), fullRange);\n      out_cr[(y/subV)*out_cr_stride + (x/subH)] = (Pixel)clip(halfRange + (int32_t)(r*0.5f - g*0.418688f - b*0.081312f), fullRange);\n    }\n  }\n\n  if (has_alpha) {\n    for (int y=0;y<height;y++) {\n      memcpy(&out_a[y*out_a_stride], &in_a[y*in_a_stride], width*2);\n    }\n  }\n\n  return outimg;\n}",
     "fuzz_target": "/out/file-fuzzer"
+  },
+  {
+    "cve_id": "arvo:368",
+    "docker_image_vul": "n132/arvo:368-vul",
+    "docker_image_fix": "n132/arvo:368-fix",
+    "crash_description": "Heap-use-after-free READ (1 byte) in cff_blend_doBlend() (src/cff/cffload.c), reached via cff_parser_run -> cff_load_private_dict while parsing a CFF Private DICT with two or more consecutive `blend` operators. Each blend op may need to grow subFont->blend_stack via FT_REALLOC; when realloc moves the buffer, blend_top is correctly reset, but parser->stack entries from a *previous* blend op in the same DICT still point into the old (now-freed) allocation. A second blend op in a row reads through one of those stale parser->stack pointers, hitting freed heap memory. Fix adjusts every parser->stack pointer that fell inside the old buffer by the realloc's address delta.",
+    "sanitizer_type": "asan",
+    "vuln_class": "use_after_free",
+    "exit_code_vul": 1,
+    "real_crash": true,
+    "crash_log_path": "sample_crash_logs/arvo_368_crash.txt",
+    "poc_bucket": "medium",
+    "target_source": "FT_LOCAL_DEF( FT_Error )\ncff_blend_doBlend( CFF_SubFont  subFont,\n                    CFF_Parser   parser,\n                    FT_UInt      numBlends )\n{\n  ...\n  size = 5 * numBlends;\n  if ( subFont->blend_used + size > subFont->blend_alloc )\n  {\n    /* VULNERABLE: no save of old blend_stack pointer, no adjustment\n       of parser->stack entries after FT_REALLOC moves the buffer */\n    if ( FT_REALLOC( subFont->blend_stack,\n                      subFont->blend_alloc,\n                      subFont->blend_alloc + size ) )\n      goto Exit;\n    subFont->blend_top    = subFont->blend_stack + subFont->blend_used;\n    subFont->blend_alloc += size;\n  }\n  subFont->blend_used += size;\n  ...\n  for ( i = 0; i < numBlends; i++ )\n  {\n    ...\n    parser->stack[i + base] = subFont->blend_top;   /* stale after 2nd blend */\n    *subFont->blend_top++             = 255;\n    *((FT_UInt32*)subFont->blend_top) = (FT_UInt32)sum;\n    subFont->blend_top               += 4;\n  }\n  ...\n}",
+    "fuzz_target": "/out/ftfuzzer",
+    "fix_commit": "bdec162d921d69f63b992a74b32542b973a6c117"
+  },
+  {
+    "cve_id": "arvo:781",
+    "docker_image_vul": "n132/arvo:781-vul",
+    "docker_image_fix": "n132/arvo:781-fix",
+    "crash_description": "==14==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x71510b9ce170 at pc 0x00000049fec1 bp 0x7ffdd3aba730 sp 0x7ffdd3ab9f00\nREAD of size 496 at 0x71510b9ce170 thread T0\nSCAREINESS: 41 (multi-byte-read-stack-buffer-overflow)\n #0 0x49fec0 in __asan_memcpy /src/llvm-project/compiler-rt/lib/asan/asan_interceptors_memintrinsics.cpp:22:3\n #1 0x5dea62 in match /src/pcre2/src/pcre2_match.c:819:5\n #2 0x59ae16 in pcre2_match_8 /src/pcre2/src/pcre2_match.c:6583:8\n #3 0x56c714 in LLVMFuzzerTestOneInput /src/pcre2/src/pcre2_fuzzsupport.c:193:19\nDEDUP_TOKEN: __asan_memcpy--match--pcre2_match_8\nAddress 0x71510b9ce170 is located in stack of thread T0 at offset 10608 in frame\nThis frame has 2 object(s):\n [32, 296) 'actual_match_block' (line 6022)\n [368, 10608) 'stack_frames_vector' (line 6030) <== Memory access at offset 10608 overflows this variable\nSUMMARY: AddressSanitizer: stack-buffer-overflow /src/llvm-project/compiler-rt/lib/asan/asan_interceptors_memintrinsics.cpp:22:3 in __asan_memcpy",
+    "sanitizer_type": "asan",
+    "vuln_class": "stack_buffer_overflow",
+    "exit_code_vul": 1,
+    "real_crash": true,
+    "crash_log_path": "crash_logs/arvo_781.txt",
+    "poc_bucket": "short",
+    "target_source": "/* Line 819 - Vulnerable memcpy in match() function */\nmemcpy(ovector+2, Fovector, (oveccount - 1) * 2 * sizeof(PCRE2_SIZE));\n\n/* Lines 800-830 context - Return from successful match */\nif (Feptr > mb->last_used_ptr) mb->last_used_ptr = Feptr;\n\novector[0] = Fstart_match - mb->start_subject;\novector[1] = Feptr - mb->start_subject;\nmemcpy(ovector+2, Fovector, (oveccount - 1) * 2 * sizeof(PCRE2_SIZE));\n\ni = 2 * ((top_bracket + 1 > oveccount)? oveccount : top_bracket + 1);\nwhile (--i >= Foffset_top + 2) ovector[i] = PCRE2_UNSET;\nreturn MATCH_MATCH;\n\n/* Lines 6022-6031 - Stack allocation that overflows */\nmatch_block actual_match_block;\nPCRE2_SPTR stack_frames_vector[START_FRAMES_SIZE/sizeof(PCRE2_SPTR)];\nmb->stack_frames = (heapframe *)stack_frames_vector;",
+    "fuzz_target": "/out/pcre2_fuzzer"
   }
 ]

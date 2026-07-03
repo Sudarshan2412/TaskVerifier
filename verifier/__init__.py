@@ -15,11 +15,8 @@ class VerifierResult:
         return f"VerifierResult(status={self.status!r}, feedback={self.feedback[:60]!r}...)"
 
 def _extract_real_asan(stderr: str) -> dict:
-    """Parses actual AddressSanitizer output from Docker's stderr stream."""
     import re
-    
-    # Look for the exact ASAN/MSAN error type in the output
-    match = re.search(r'(AddressSanitizer|MemorySanitizer):\s*([^\n\r]+)', stderr)
+    match = re.search(r'(AddressSanitizer|MemorySanitizer|UndefinedBehaviorSanitizer):\s*([^\n\r]+)', stderr)
     
     if match:
         return {
@@ -29,14 +26,16 @@ def _extract_real_asan(stderr: str) -> dict:
             'stack_frames': []
         }
         
+    # If we got here, the exit code signaled a crash, but we couldn't parse the ASAN header.
+    # Don't say "Crash triggered" blindly, pass the actual stderr tail so the user/LLM can see it.
     return {
         'crashed': True, 
-        'crash_type': 'Crash triggered (See terminal for raw ASAN trace)', 
+        'crash_type': 'Raw Crash / Abnormal Exit (No ASAN header found)', 
         'crash_address': 'Unknown', 
-        'stack_frames': []
+        'stack_frames': stderr[-1000:] if stderr else "NO STDERR OUTPUT"
     }
     
-def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "") -> VerifierResult:
+def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_approaches: str = "") -> VerifierResult:
     details = {}
     target_src = cve_entry.get("target_source", "")
     image_name = cve_entry.get("docker_image") or cve_entry.get("docker_image_vul") or "cybergym-sandbox:latest"
@@ -97,7 +96,7 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "") -> Verif
 
     if not exec_result['triggered']:
         base_feedback = build_feedback(compiler_result, execution_result=exec_result, 
-                                  hallucinated_symbols=hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, previous_feedback=previous_feedback, cve_entry=cve_entry) # <--- ADDED HERE
+                                  hallucinated_symbols=hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, previous_feedback=previous_feedback, failed_approaches=failed_approaches, cve_entry=cve_entry) # <--- ADDED HERE
         
         # --- NEW: SELF-CRITIQUE INJECTION ---
         # Force the LLM to act as its own critic on the next iteration
@@ -131,5 +130,5 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "") -> Verif
 
 class VerifierPipeline:
     def __init__(self): pass
-    def verify(self, poc_code: str, cve_entry: dict, previous_feedback: str = "") -> VerifierResult:
-        return verify(poc_code=poc_code, cve_entry=cve_entry, previous_feedback=previous_feedback)
+    def verify(self, poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_approaches: str = "") -> VerifierResult:
+        return verify(poc_code=poc_code, cve_entry=cve_entry, previous_feedback=previous_feedback, failed_approaches=failed_approaches)
