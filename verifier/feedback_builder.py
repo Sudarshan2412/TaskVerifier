@@ -232,8 +232,39 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
 
     return "Critic LLM got stuck after all turns."
 
+
+def _is_low_quality_feedback(text: str) -> bool:
+    """Return True if *text* is too short, empty, or consists only of tool stubs.
+
+    Used by P9 (Critic Failure Escalation) and P11 (Feedback Quality Gate)
+    to detect when the critic failed to produce actionable analysis.
+    """
+    if not text or len(text.strip()) < 100:
+        return True
+
+    stripped = text.strip()
+
+    # Pure tool-command stubs (e.g. "SEARCH: xmlFuzzReadString")
+    lines = [l.strip() for l in stripped.split("\n") if l.strip()]
+    tool_lines = sum(1 for l in lines if l.startswith(("SEARCH:", "READ:", "READ_HEX:")))
+    if tool_lines > 0 and tool_lines >= len(lines) * 0.5:
+        return True
+
+    # Must contain at least one actionable verb
+    actionable_verbs = ("change", "replace", "set", "use", "remove", "add",
+                        "write", "must", "instead", "fix", "correct", "modify")
+    text_lower = stripped.lower()
+    if not any(verb in text_lower for verb in actionable_verbs):
+        return True
+
+    return False
+
 def discover_fuzz_target_format(cve_entry: dict, image_name: str) -> str:
-    """Uses the critic tools to discover the expected input format before attempt 1."""
+    """Uses the critic tools to discover the expected input format before attempt 1.
+
+    Returns a structured block with HEADER_FORMAT, STRING_DELIMITER, and
+    FIELD_ORDER — or falls back to the raw discovery text if structuring fails.
+    """
     fuzz_target = cve_entry.get("fuzz_target", "")
     if not fuzz_target:
         return ""
@@ -252,8 +283,91 @@ def discover_fuzz_target_format(cve_entry: dict, image_name: str) -> str:
     usr_msg = f"The fuzz target is {fuzz_target}. Discover its input format."
     print(f"\n[PRE-DISCOVERY] 🧠 Discovering format for {fuzz_target}...")
     
-    analysis = _strip_emergency_preamble(call_critic_llm(sys_msg, usr_msg, image_name))
-    return f"Fuzz Target Input Format Discovery (from {fuzz_target}):\n{analysis}"
+    raw_analysis = _strip_emergency_preamble(call_critic_llm(sys_msg, usr_msg, image_name))
+
+    # ── P8: Validate and structure the discovery output ──────────────────
+    # Use a cheap second call to extract the three critical fields from the
+    # free-form discovery text.  If any field is missing, re-prompt once.
+    structured = _structure_format_discovery(raw_analysis, fuzz_target, image_name)
+    if structured:
+        return structured
+
+    # Fallback: return the raw analysis prefixed with a label
+    return f"Fuzz Target Input Format Discovery (from {fuzz_target}):\n{raw_analysis}"
+
+
+def _structure_format_discovery(raw_analysis: str, fuzz_target: str, image_name: str) -> str:
+    """Extract structured format fields from the raw discovery text.
+
+    Returns the structured block, or \"\" if extraction fails.
+    """
+    import json as _json
+
+    extraction_prompt = (
+        "You are a technical editor.  From the analysis below, extract EXACTLY three fields.\n"
+        "Output ONLY a JSON object with these keys (no markdown, no explanation):\n"
+        "  HEADER_FORMAT — describe the binary header (e.g. '4 bytes big-endian integer for maxAlloc')\n"
+        "  STRING_DELIMITER — describe how each string field is terminated "
+        "(e.g. 'backslash (0x5C) followed by newline (0x0A)' or 'null byte (0x00)' or '4-byte big-endian length prefix')\n"
+        "  FIELD_ORDER — numbered list of fields in the order they appear "
+        "(e.g. '1. maxAlloc (4 bytes), 2. XPath expression (delimited), 3. XML document (delimited)')\n\n"
+        "If the analysis does not contain enough information for a field, set it to \"UNKNOWN\".\n\n"
+        f"=== ANALYSIS ===\n{raw_analysis}\n=== END ==="
+    )
+
+    api_key = os.environ.get("OPEN_ROUTER_KEY")
+    if not api_key:
+        return ""
+
+    model_id = os.environ.get("CRITIC_MODEL", "deepseek/deepseek-v4-flash")
+    url = "https://openrouter.ai/api/v1/chat/completions"
+
+    try:
+        resp = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model_id,
+                "messages": [{"role": "user", "content": extraction_prompt}],
+                "max_tokens": 512,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+        if content is None:
+            return ""
+        content = content.strip()
+
+        # Strip markdown fences if the model wrapped its JSON in ```json ... ```
+        content = re.sub(r"^```(?:json)?\s*", "", content)
+        content = re.sub(r"\s*```$", "", content)
+
+        fields = _json.loads(content)
+        header = fields.get("HEADER_FORMAT", "UNKNOWN")
+        delim = fields.get("STRING_DELIMITER", "UNKNOWN")
+        order = fields.get("FIELD_ORDER", "UNKNOWN")
+
+        # If all fields are UNKNOWN, the extraction failed — fall back
+        if header == "UNKNOWN" and delim == "UNKNOWN" and order == "UNKNOWN":
+            return ""
+
+        block = (
+            f"=== FUZZ TARGET INPUT FORMAT (VERIFIED — from {fuzz_target}) ===\n"
+            f"HEADER_FORMAT: {header}\n"
+            f"STRING_DELIMITER: {delim}\n"
+            f"FIELD_ORDER: {order}\n"
+            f"=== END FORMAT ===\n"
+            f"\nYour generator program MUST produce a binary file matching this exact layout.\n"
+            f"Do NOT write raw XML or raw text.  Write the binary header first, then each\n"
+            f"delimited field in the order specified above.\n"
+        )
+        print(f"[PRE-DISCOVERY] ✅ Structured format extracted successfully")
+        return block
+
+    except Exception as e:
+        print(f"[PRE-DISCOVERY] ⚠️ Structured extraction failed: {e}")
+        return ""
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -408,6 +522,34 @@ def build_feedback(
 
         print("\n[CRITIC] 🧠 Investigating execution failure with tools...")
         analysis = _strip_emergency_preamble(call_critic_llm(sys_msg, usr_msg, image_name))
+
+        # ── P9: Critic Failure Escalation ────────────────────────────────────
+        # If the critic exhausted its tool turns without producing a real
+        # diagnostic conclusion, retry once with a forced-conclusion prompt.
+        if _is_low_quality_feedback(analysis):
+            print("[CRITIC] ⚠️ Low-quality feedback detected — retrying with forced conclusion...")
+            forced_sys = (
+                "You are a Senior Security Engineer.  A previous analysis attempt ran out of "
+                "tool turns without providing a conclusion.  Based on everything you know, "
+                "state the root cause of the PoC failure and the required changes in 3–5 "
+                "sentences.  DO NOT use any tools.  DO NOT write C code."
+            )
+            forced_usr = (
+                f"Agent's generator code:\n```c\n{poc_code}\n```\n\n"
+                f"Target output:\n{fuzzer_output[-3000:]}\n\n"
+                f"Previous incomplete analysis:\n{analysis}\n\n"
+                f"State the root cause and required changes NOW."
+            )
+            retry_analysis = _strip_emergency_preamble(call_critic_llm(forced_sys, forced_usr, image_name))
+            if not _is_low_quality_feedback(retry_analysis):
+                analysis = retry_analysis
+            else:
+                analysis = (
+                    "The verifier could not determine why the PoC failed. "
+                    "The payload was structurally valid but did not trigger the crash. "
+                    "Try a fundamentally different approach: different binary format header values, "
+                    "different string content, or different XML/document structure."
+                )
         
         # Strip excessive C code blocks from analysis to prevent generator confusion
         code_blocks = re.findall(r"```[cC](.*?)(?:```|$)", analysis, re.DOTALL)

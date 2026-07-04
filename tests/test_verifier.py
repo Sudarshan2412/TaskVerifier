@@ -11,8 +11,15 @@ from verifier import verify
 
 # ─── compiler.py tests ───
 
-def test_compiler_valid_code():
+def test_compiler_valid_code(monkeypatch):
     """Valid C code should compile successfully."""
+    import subprocess
+    class MockProcess:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: MockProcess())
+    
     valid_c = "#include <stdio.h>\nint main(){ printf(\"hi\"); return 0; }"
     result = compile_poc(valid_c, cve_entry={})
     assert result['success'] == True
@@ -22,8 +29,15 @@ def test_compiler_valid_code():
         os.unlink(result['binary_path'])
 
 
-def test_compiler_invalid_code():
+def test_compiler_invalid_code(monkeypatch):
     """Garbage code should fail to compile and return errors."""
+    import subprocess
+    class MockProcess:
+        returncode = 1
+        stdout = ""
+        stderr = "error: unknown type name"
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: MockProcess())
+    
     bad_c = "this is not C code at all!!!"
     result = compile_poc(bad_c, cve_entry={})
     assert result['success'] == False
@@ -95,8 +109,12 @@ def test_feedback_compile_fail():
 
 # ─── full pipeline test ───
 
-def test_full_pipeline_compile_failure():
+def test_full_pipeline_compile_failure(monkeypatch):
     """End-to-end: garbage code should produce a compile_fail VerifierResult."""
+    # Mock compile_poc so it doesn't run docker and returns a compilation error
+    import verifier
+    monkeypatch.setattr(verifier, "compile_poc", lambda *a, **kw: {'success': False, 'errors': [{'type': 'compilation_error', 'message': 'mock compile error'}], 'binary_path': None, 'c_file': None})
+    
     result = verify("not C code", cve_entry={})
     assert result.status == 'compile_fail'
     assert len(result.feedback) > 0

@@ -140,20 +140,31 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
         ),
     ),
 
-    # ── Input format delimiter / terminator ────────────────────────────────
-    # Matches critic READ output statements like:
-    #   "terminator confirmed as backslash-newline"
-    #   "delimiter is 0x5C 0x0A"
-    #   "separator confirmed as null byte"
-    # Format-agnostic: any fuzz harness has an input format terminator.
+    # ── P10: Format Theory Detection Patterns ────────────────────────────────
+    # Matches claims about delimiters to detect contradiction.
     (
         "delimiter",
         re.compile(
-            r"(?:terminator|delimiter|separator|terminated\s+by)"
-            r"\s+(?:confirmed\s+as\s+|is\s+)?"
-            r"(backslash[- ]newline|null[- ]?byte|null[- ]?terminated"
-            r"|0x[0-9a-fA-F]{2}(?:\s+0x[0-9a-fA-F]{2})*"
-            r"|\\\\\s*n|\\n)",
+            r"(?:delimiter|terminator|separator)\s+(?:is\s+|confirmed\s+as\s+|uses\s+)?"
+            r"(null[- ]?byte|\\0|backslash[- ]newline|0x5C 0x0A|length prefix|length-prefixed|4-byte length)",
+            re.IGNORECASE,
+        ),
+    ),
+
+    (
+        "endianness",
+        re.compile(
+            r"(?:is\s+|uses\s+|confirmed\s+as\s+)?"
+            r"(big-endian|little-endian|BE|LE)",
+            re.IGNORECASE,
+        ),
+    ),
+
+    (
+        "field_count",
+        re.compile(
+            r"(?:has\s+|requires\s+|confirmed\s+as\s+)?"
+            r"(two fields|three fields|two strings|three strings)",
             re.IGNORECASE,
         ),
     ),
@@ -166,7 +177,7 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
     (
         "reads_until",
         re.compile(
-            r"reads\s+until\s+(?:it\s+encounters\s+)?"
+            r"reads\s+until\s+(?:it\s+encounters\s+|finding\s+)?"
             r"(backslash[- ]newline|null[- ]?byte|0x[0-9a-fA-F]{2}"
             r"|[a-zA-Z][a-zA-Z0-9_ -]{3,40})",
             re.IGNORECASE,
@@ -247,20 +258,27 @@ class FactAccumulator:
                     key = f"{category}:{key_name}"
                     value = match.group(2) if len(match.groups()) >= 2 else match.group(1)
 
-                # Contradiction detection: same category, different value.
-                # Check whether any existing fact has the same category but a different value.
-                # If so, record the conflict for warning injection — do NOT overwrite.
-                existing_in_category = [
-                    (k, v) for k, v in self._facts.items()
-                    if k.startswith(f"{category}:") and k != key
-                ]
-                if existing_in_category:
-                    existing_key, (_, existing_val) = existing_in_category[0]
-                    # Only flag as contradiction if the categories warrant it
-                    if category in ("delimiter", "reads_until", "constant"):
-                        self._contradictions[category] = (existing_val, value.strip())
-                    # First-wins: do not overwrite existing fact
+                # Contradiction detection:
+                # 1. Exact same key exists (e.g. constant:maxtextextent) with different value
+                if key in self._facts:
+                    _, existing_val = self._facts[key]
+                    if existing_val != value.strip():
+                        if category in ("delimiter", "reads_until", "constant", "endianness", "field_count"):
+                            self._contradictions[category] = (existing_val, value.strip())
+                    # First-wins: do not overwrite
                     continue
+
+                # 2. Same category, different key (e.g. delimiter:\0 vs delimiter:backslash-newline)
+                # Only some categories are mutually exclusive globally.
+                if category in ("delimiter", "endianness", "field_count", "reads_until"):
+                    existing_in_category = [
+                        (k, v) for k, v in self._facts.items()
+                        if k.startswith(f"{category}:")
+                    ]
+                    if existing_in_category:
+                        _, (_, existing_val) = existing_in_category[0]
+                        self._contradictions[category] = (existing_val, value.strip())
+                        continue
 
                 self._facts[key] = (category, value.strip())
 

@@ -156,14 +156,14 @@ class TestFactAccumulator:
     # ── Constant extraction ─────────────────────────────────────────────────
 
     @pytest.mark.parametrize("feedback, expected_key_fragment, expected_value", [
-        # "is <value>"
-        ("MaxTextExtent is 2053", "maxtextextent", "2053"),
-        # "= <value>"
-        ("MaxTextExtent = 4096", "maxtextextent", "4096"),
+        # "is <value>" is no longer supported, must use "confirmed as"
+        ("MaxTextExtent confirmed as 2053", "maxtextextent", "2053"),
+        # "= <value>" is no longer supported, must use "verified as"
+        ("MaxTextExtent verified as 4096", "maxtextextent", "4096"),
         # "#define style"
         ("#define MaxTextExtent 2053", "maxtextextent", "2053"),
         # hex value
-        ("DICOM tag is 0x0028", "dicom_tag", "0x0028"),
+        ("DICOM tag confirmed as 0x0028", "dicom_tag", "0x0028"),
         # "confirmed as"
         ("MaxRGB confirmed as 65535", "maxrgb", "65535"),
     ])
@@ -180,7 +180,7 @@ class TestFactAccumulator:
 
     def test_extracts_operator_opcode(self):
         acc = FactAccumulator()
-        acc.update("The blend operator is 0x10 (16 decimal)")
+        acc.update("The blend operator confirmed as 0x10 (16 decimal)")
         rendered = acc.render()
         assert "0x10" in rendered
 
@@ -195,19 +195,21 @@ class TestFactAccumulator:
     def test_first_confirmed_value_wins(self):
         """A later feedback with a different value should NOT overwrite the first."""
         acc = FactAccumulator()
-        acc.update("MaxTextExtent is 2053")
-        acc.update("MaxTextExtent = 4096")   # later, contradictory
+        acc.update("MaxTextExtent confirmed as 2053")
+        acc.update("MaxTextExtent confirmed as 4096")   # later, contradictory
         rendered = acc.render()
-        # 2053 must be present; 4096 must NOT overwrite it
-        assert "2053" in rendered
-        assert "4096" not in rendered
+        # 2053 must be present as the confirmed value
+        assert "= 2053" in rendered
+        assert "= 4096" not in rendered
+        # But the contradiction should be flagged
+        assert "Prior confirmed: '2053' vs new claim: '4096'" in rendered
 
     # ── Accumulation across turns ───────────────────────────────────────────
 
     def test_accumulates_across_multiple_updates(self):
         acc = FactAccumulator()
-        acc.update("MaxTextExtent is 2053")
-        acc.update("MaxRGB is 65535")
+        acc.update("MaxTextExtent confirmed as 2053")
+        acc.update("MaxRGB confirmed as 65535")
         assert len(acc) == 2
         rendered = acc.render()
         assert "2053" in rendered
@@ -215,15 +217,15 @@ class TestFactAccumulator:
 
     def test_duplicate_same_value_not_double_counted(self):
         acc = FactAccumulator()
-        acc.update("MaxTextExtent is 2053")
-        acc.update("MaxTextExtent is 2053")
+        acc.update("MaxTextExtent confirmed as 2053")
+        acc.update("MaxTextExtent confirmed as 2053")
         assert len(acc) == 1
 
     # ── Reset ───────────────────────────────────────────────────────────────
 
     def test_reset_clears_all_facts(self):
         acc = FactAccumulator()
-        acc.update("MaxTextExtent is 2053")
+        acc.update("MaxTextExtent confirmed as 2053")
         acc.reset()
         assert len(acc) == 0
         assert acc.render() == ""
@@ -232,13 +234,13 @@ class TestFactAccumulator:
 
     def test_render_contains_header(self):
         acc = FactAccumulator()
-        acc.update("MaxTextExtent is 2053")
+        acc.update("MaxTextExtent confirmed as 2053")
         assert "CONFIRMED FACTS" in acc.render()
 
     def test_render_contains_trust_instruction(self):
         """Rendered block should remind the LLM to trust the confirmed values."""
         acc = FactAccumulator()
-        acc.update("MaxTextExtent is 2053")
+        acc.update("MaxTextExtent confirmed as 2053")
         rendered = acc.render()
         assert "do not contradict" in rendered.lower() or "trust" in rendered.lower()
 
@@ -279,7 +281,7 @@ class TestFactAccumulator:
 
     def test_repr(self):
         acc = FactAccumulator()
-        acc.update("MaxTextExtent is 2053")
+        acc.update("MaxTextExtent confirmed as 2053")
         assert "1 fact" in repr(acc)
 
 
@@ -551,13 +553,13 @@ class TestRetryMemory:
     def test_truncates_long_strings(self):
         mem = RetryMemory()
         long_approach = "A" * 100
-        long_reason = "B" * 100
+        long_reason = "B" * 200
         mem.record(1, long_approach, long_reason)
-        
+    
         rendered = mem.render()
         assert len(rendered) < 400
         assert "A" * 81 not in rendered  # Should be truncated to 80
-        assert "B" * 81 not in rendered
+        assert "B" * 121 not in rendered # Should be truncated to 120
 
     def test_fifo_eviction(self):
         mem = RetryMemory(max_entries=3)

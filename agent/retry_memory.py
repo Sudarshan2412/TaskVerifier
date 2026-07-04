@@ -66,8 +66,8 @@ class RetryMemory:
     """
 
     def __init__(self, max_entries: int = _MAX_ENTRIES) -> None:
-        self._entries: list[_FailedApproach] = []
         self._max_entries = max_entries
+        self._entries: deque[_FailedApproach] = deque(maxlen=self._max_entries) if self._max_entries is not None else deque()
 
     def record(self, attempt: int, approach: str, reason: str) -> None:
         """

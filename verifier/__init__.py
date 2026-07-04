@@ -126,6 +126,16 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_a
     feedback = build_feedback(compiler_result, sanitizer_result, exec_result, 
                               hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, cve_entry=cve_entry) # <--- ADDED HERE
     
+    # ── P11: Feedback Quality Gate ───────────────────────────────────────────
+    # We must inline a simplified quality check here because we don't have
+    # access to _is_low_quality_feedback from feedback_builder directly.
+    stripped_fb = feedback.strip()
+    if not stripped_fb or len(stripped_fb) < 100:
+        feedback = (
+            "The verifier crashed but did not produce a valid diagnostic report. "
+            "Please analyze the provided fuzzer output and try a different approach."
+        )
+
     return VerifierResult('crash', feedback, details)
 
 class VerifierPipeline:
