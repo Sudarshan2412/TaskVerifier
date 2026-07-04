@@ -232,6 +232,29 @@ def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
 
     return "Critic LLM got stuck after all turns."
 
+def discover_fuzz_target_format(cve_entry: dict, image_name: str) -> str:
+    """Uses the critic tools to discover the expected input format before attempt 1."""
+    fuzz_target = cve_entry.get("fuzz_target", "")
+    if not fuzz_target:
+        return ""
+
+    sys_msg = (
+        "You are a Security Researcher discovering the expected input format of a fuzz harness. "
+        "Use SEARCH and READ tools to find the harness source file (usually containing LLVMFuzzerTestOneInput). "
+        "Analyze the source to determine the exact parsing protocol: binary headers, string delimiters, endianness, number of fields, etc. "
+        "Rules:\n"
+        "1. Start by SEARCHing for the fuzz target name or LLVMFuzzerTestOneInput.\n"
+        "2. READ the source file you find.\n"
+        "3. Output ONLY a concise summary of the expected input format. Focus only on structure, not on the vulnerability.\n"
+        "4. DO NOT WRITE ANY C CODE. Any code blocks will be DELETED."
+    )
+    
+    usr_msg = f"The fuzz target is {fuzz_target}. Discover its input format."
+    print(f"\n[PRE-DISCOVERY] 🧠 Discovering format for {fuzz_target}...")
+    
+    analysis = _strip_emergency_preamble(call_critic_llm(sys_msg, usr_msg, image_name))
+    return f"Fuzz Target Input Format Discovery (from {fuzz_target}):\n{analysis}"
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 3. Main Feedback Builder
@@ -247,6 +270,7 @@ def build_feedback(
     poc_code: str = "",
     previous_feedback: str = "",
     failed_approaches: str = "",
+    confirmed_facts: str = "",
     cve_entry: dict = None
 ) -> str:
     if image_name is None:
@@ -270,7 +294,7 @@ def build_feedback(
         errors = compiler_result.get('errors', [])
         err_msg = errors[0].get('message', 'Unknown error') if errors else 'Unknown error'
 
-        sys_msg = "You are a C Compiler Expert. Explain the compiler error concisely. Do NOT use tools."
+        sys_msg = "You are a C Compiler Expert. Explain the compiler error concisely. Do NOT use tools. DO NOT WRITE ANY C CODE. Any code blocks in your output will be DELETED."
         usr_msg = (
             f"C Code:\n```c\n{poc_code}\n```\n"
             f"Compiler Error:\n{err_msg}\n"
@@ -331,7 +355,7 @@ def build_feedback(
             "10. DO NOT GUESS OPCODES: If the failure involves an unrecognized operator, instruction, or token, DO NOT guess its byte value. You MUST use SEARCH to locate the exact opcode definitions in the target's source code (e.g., looking in header files or token tables) to verify the correct byte sequence.\n"
             "11. Trace execution backwards from the vulnerable function. Identify exactly which struct sizes, bounds checks (e.g., dataCount > 0), or stack limits (e.g., maxstack) must be satisfied to reach it.\n"
             "12. The Vulnerability Description is GROUND TRUTH. Do not invent alternative code paths or assert that the vulnerability occurs elsewhere (e.g., during glyph loading instead of parsing). Your job is strictly to figure out why the PoC failed to reach the specific path described.\n"
-            "13. CRITICAL: DO NOT WRITE ANY C CODE. Your output will be read by an automated agent. Do not provide a corrected PoC or code blocks. Provide ONLY your textual analysis and the specific byte offsets/values that need to change.\n"
+            "13. CRITICAL: DO NOT WRITE ANY C CODE. Any code blocks in your output will be DELETED. Providing code wastes your token budget and delays the fix. Your output will be read by an automated agent. Do not provide a corrected PoC or code blocks. Provide ONLY your textual analysis and the specific byte offsets/values that need to change.\n"
         )
 
         usr_msg = (
@@ -346,6 +370,9 @@ def build_feedback(
 
         if hex_dump and "returned no output" not in hex_dump and "Tool execution failed" not in hex_dump:
             usr_msg += f"\n\nHex dump of generated file (first 960 bytes):\n```\n{hex_dump}\n```\n"
+
+        if confirmed_facts:
+            usr_msg += f"\n\n{confirmed_facts}"
 
         # Condense previous feedback to avoid compounding wrong theories
         if failed_approaches:
@@ -376,6 +403,7 @@ def build_feedback(
                 f"\nThe fuzz target binary is: {fuzz_target}\n"
                 f"If the binary name contains a format hint (e.g. 'MVG', 'jpeg', 'png'), "
                 f"the input file must be valid in that format.\n"
+                f"Use SEARCH: {fuzz_target} or SEARCH: LLVMFuzzerTestOneInput to find the harness source file immediately.\n"
             )
 
         print("\n[CRITIC] 🧠 Investigating execution failure with tools...")

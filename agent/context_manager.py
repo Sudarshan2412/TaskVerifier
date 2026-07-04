@@ -127,57 +127,52 @@ class ContextManager:
 
     def _truncate_if_needed(self) -> None:
         """
-        Apply truncation ONLY if context exceeds the (now very large) budget.
+        Apply truncation ONLY if context exceeds 70% of the budget.
         
-        At 800K tokens, a typical 5-attempt trial uses ~50-100K tokens,
-        so this should rarely fire. When it does:
         1. Keep first message (CVE description + target source)
-        2. Keep ALL feedback messages (verifier output) — they are critical
-        3. Drop only raw LLM responses from the oldest attempts
-        4. Never drop the last 6 messages (3 complete turn pairs)
+        2. Keep the last 2 complete attempts (4 to 6 messages) in full detail.
+        3. Compress older assistant responses to just a marker.
+        4. Compress older user feedback to just the attempt number and first paragraph of analysis.
         """
+        import re
         current_tokens = self.token_estimate()
-        if current_tokens <= self.max_tokens:
-            return  # Within budget
+        if current_tokens <= self.max_tokens * 0.7:
+            return  # Within 70% budget
 
         logger.warning(
-            f"Context at {current_tokens} tokens exceeds {self.max_tokens} budget — truncating"
+            f"Context at {current_tokens} tokens exceeds 70% of {self.max_tokens} budget — compressing"
         )
         
-        # Keep first message + last 6 messages
         if len(self.history) <= 7:
             return
         
         first_message = self.history[0]
-        last_6 = self.history[-6:]
-        middle = self.history[1:-6]
+        # Keep last 2 attempts in full detail (roughly 4-6 messages depending on current turn state)
+        keep_count = min(6, len(self.history) - 1)
+        last_n = self.history[-keep_count:]
+        middle = self.history[1:-keep_count]
         
-        # Selectively summarize older assistant responses instead of dropping them
-        dropped = 0
-        while middle and self.token_estimate() > self.max_tokens:
-            # Find the oldest assistant message and truncate its content
-            for i, msg in enumerate(middle):
-                if msg["role"] == "assistant":
-                    # Keep just the code block, drop the prose
-                    code_start = msg["content"].find("```")
-                    if code_start >= 0:
-                        middle[i] = {"role": "assistant", "content": "[Earlier attempt — code preserved]\n" + msg["content"][code_start:]}
-                    else:
-                        middle.pop(i)
-                    dropped += 1
-                    break
-            else:
-                # No more assistant messages to trim, drop oldest pair
-                if len(middle) >= 2:
-                    middle = middle[2:]
-                    dropped += 1
-                else:
-                    break
-            
-            self.history = [first_message] + middle + last_6
+        compressed = 0
+        for i, msg in enumerate(middle):
+            if msg["role"] == "assistant":
+                if "[Earlier attempt — compressed]" not in msg["content"]:
+                    msg["content"] = "[Earlier attempt — compressed]"
+                    compressed += 1
+            elif msg["role"] == "user":
+                if "[Earlier feedback — compressed]" not in msg["content"]:
+                    attempt_match = re.search(r'Your previous attempt \(Attempt \d+\) failed:', msg["content"])
+                    att_str = attempt_match.group(0) if attempt_match else "Previous attempt failed:"
+                    
+                    analysis_match = re.search(r'Senior Engineer Analysis:\n(.*?)(?:\n\n|\Z)', msg["content"], re.DOTALL)
+                    analysis_str = analysis_match.group(1).strip() if analysis_match else "Feedback compressed."
+                    
+                    msg["content"] = f"[Earlier feedback — compressed]\n{att_str}\nAnalysis Summary: {analysis_str}"
+                    compressed += 1
         
-        if dropped:
-            logger.warning(f"Truncated {dropped} older messages to fit context budget")
+        self.history = [first_message] + middle + last_n
+        
+        if compressed:
+            logger.warning(f"Compressed {compressed} older messages to fit context budget")
 
 
 if __name__ == "__main__":

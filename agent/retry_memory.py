@@ -37,7 +37,7 @@ from collections import deque
 from dataclasses import dataclass
 
 
-_MAX_ENTRIES = 8
+_MAX_ENTRIES = None
 _MAX_APPROACH_LEN = 80
 _MAX_REASON_LEN = 120
 _MAX_STRUCTURE_NOTE_LEN = 120
@@ -66,7 +66,8 @@ class RetryMemory:
     """
 
     def __init__(self, max_entries: int = _MAX_ENTRIES) -> None:
-        self._entries: deque[_FailedApproach] = deque(maxlen=max_entries)
+        self._entries: list[_FailedApproach] = []
+        self._max_entries = max_entries
 
     def record(self, attempt: int, approach: str, reason: str) -> None:
         """

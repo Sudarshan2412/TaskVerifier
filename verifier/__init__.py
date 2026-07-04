@@ -35,7 +35,7 @@ def _extract_real_asan(stderr: str) -> dict:
         'stack_frames': stderr[-1000:] if stderr else "NO STDERR OUTPUT"
     }
     
-def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_approaches: str = "") -> VerifierResult:
+def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_approaches: str = "", confirmed_facts: str = "") -> VerifierResult:
     details = {}
     target_src = cve_entry.get("target_source", "")
     image_name = cve_entry.get("docker_image") or cve_entry.get("docker_image_vul") or "cybergym-sandbox:latest"
@@ -96,7 +96,7 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_a
 
     if not exec_result['triggered']:
         base_feedback = build_feedback(compiler_result, execution_result=exec_result, 
-                                  hallucinated_symbols=hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, previous_feedback=previous_feedback, failed_approaches=failed_approaches, cve_entry=cve_entry) # <--- ADDED HERE
+                                  hallucinated_symbols=hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, previous_feedback=previous_feedback, failed_approaches=failed_approaches, confirmed_facts=confirmed_facts, cve_entry=cve_entry) # <--- ADDED HERE
         
         # --- NEW: SELF-CRITIQUE INJECTION ---
         # Force the LLM to act as its own critic on the next iteration
@@ -130,5 +130,5 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_a
 
 class VerifierPipeline:
     def __init__(self): pass
-    def verify(self, poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_approaches: str = "") -> VerifierResult:
-        return verify(poc_code=poc_code, cve_entry=cve_entry, previous_feedback=previous_feedback, failed_approaches=failed_approaches)
+    def verify(self, poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_approaches: str = "", confirmed_facts: str = "") -> VerifierResult:
+        return verify(poc_code=poc_code, cve_entry=cve_entry, previous_feedback=previous_feedback, failed_approaches=failed_approaches, confirmed_facts=confirmed_facts)
