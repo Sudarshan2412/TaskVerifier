@@ -66,6 +66,21 @@ def _extract_approach_note(poc_code: str, feedback_text: str) -> str:
     """
     notes = []
 
+    # Extract top-level binary format description from PoC comments.
+    # Agent PoCs frequently include a comment like:
+    #   /* Binary format: [4-byte header][string\backslash-newline][...] */
+    # Capturing this lets RetryMemory distinguish attempts that used
+    # structurally different formats even when their hex bytes overlap.
+    # Format-agnostic: any binary format PoC can include such a comment.
+    if poc_code:
+        fmt_match = re.search(
+            r'/[*]\s*(?:Binary\s+)?[Ff]ormat\s*:\s*([^\n*/]{10,120})',
+            poc_code,
+        )
+        if fmt_match:
+            fmt_desc = fmt_match.group(1).strip().rstrip('*').strip()
+            notes.append(f"fmt:{fmt_desc[:80]}")
+
     # Operator or opcode value mentioned in feedback
     # Match "operator ... 0x17" or "opcode ... 0x17" with up to 3 words between
     op_match = re.search(

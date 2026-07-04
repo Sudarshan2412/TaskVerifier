@@ -57,6 +57,19 @@ def execute_docker_tool(cmd_type: str, arg: str, image_name: str) -> str:
 _CRITIC_MAX_TOKENS = int(os.environ.get("CRITIC_MAX_TOKENS", "2048"))
 
 
+def _strip_emergency_preamble(text: str) -> str:
+    """
+    If critic output contains [EMERGENCY CONTINUATION], discard everything before it.
+    The preamble was truncated mid-thought and may contradict the continuation.
+    Only the continuation section is coherent. Format-agnostic.
+    """
+    for marker in ("[EMERGENCY CONTINUATION]:", "[EMERGENCY CONTINUATION]"):
+        idx = text.find(marker)
+        if idx != -1:
+            return text[idx + len(marker):].lstrip(":\n ")
+    return text
+
+
 def call_critic_llm(sys_msg: str, usr_msg: str, image_name: str) -> str:
     """Calls the LLM, handles text-based tool requests, returns final analysis."""
     api_key = os.environ.get("OPEN_ROUTER_KEY")
@@ -265,7 +278,7 @@ def build_feedback(
         )
 
         print("\n[CRITIC] 🧠 Analyzing compile error...")
-        analysis = call_critic_llm(sys_msg, usr_msg, image_name)
+        analysis = _strip_emergency_preamble(call_critic_llm(sys_msg, usr_msg, image_name))
         return f"Compilation failed.\nSenior Engineer Analysis:\n{analysis}"
 
     # ── Path C: execution ran but no crash ────────────────────────────────────
@@ -303,6 +316,7 @@ def build_feedback(
             "To search: SEARCH: <keyword>\n"
             "To read a file: READ: /absolute/path/to/file.c\n\n"
             "RULES:\n"
+            "0. CONCLUSION FIRST: State your conclusion and the exact changes needed in the FIRST 150 tokens. Lead with what must change. Provide supporting analysis only AFTER stating the required fix.\n"
             "1. ONE command per turn.\n"
             "2. NEVER guess a constant value. If SEARCH returns nothing, try a broader query.\n"
             "3. Once you have confirmed all constants, state them explicitly using the exact phrase 'X confirmed as Y' (e.g., 'MAX_SIZE confirmed as 4096'). Do not use generic assignments like 'X = Y'. Then output your final analysis.\n"
@@ -365,7 +379,7 @@ def build_feedback(
             )
 
         print("\n[CRITIC] 🧠 Investigating execution failure with tools...")
-        analysis = call_critic_llm(sys_msg, usr_msg, image_name)
+        analysis = _strip_emergency_preamble(call_critic_llm(sys_msg, usr_msg, image_name))
         
         # Strip excessive C code blocks from analysis to prevent generator confusion
         code_blocks = re.findall(r"```[cC](.*?)(?:```|$)", analysis, re.DOTALL)

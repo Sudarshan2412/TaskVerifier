@@ -140,6 +140,39 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
         ),
     ),
 
+    # ── Input format delimiter / terminator ────────────────────────────────
+    # Matches critic READ output statements like:
+    #   "terminator confirmed as backslash-newline"
+    #   "delimiter is 0x5C 0x0A"
+    #   "separator confirmed as null byte"
+    # Format-agnostic: any fuzz harness has an input format terminator.
+    (
+        "delimiter",
+        re.compile(
+            r"(?:terminator|delimiter|separator|terminated\s+by)"
+            r"\s+(?:confirmed\s+as\s+|is\s+)?"
+            r"(backslash[- ]newline|null[- ]?byte|null[- ]?terminated"
+            r"|0x[0-9a-fA-F]{2}(?:\s+0x[0-9a-fA-F]{2})*"
+            r"|\\\\\s*n|\\n)",
+            re.IGNORECASE,
+        ),
+    ),
+
+    # ── "reads until X" — harness termination condition ────────────────────
+    # Matches:
+    #   "reads until it encounters backslash-newline"
+    #   "reads until null byte"
+    # Captures what the fuzz harness uses to delimit input fields.
+    (
+        "reads_until",
+        re.compile(
+            r"reads\s+until\s+(?:it\s+encounters\s+)?"
+            r"(backslash[- ]newline|null[- ]?byte|0x[0-9a-fA-F]{2}"
+            r"|[a-zA-Z][a-zA-Z0-9_ -]{3,40})",
+            re.IGNORECASE,
+        ),
+    ),
+
     # NOTE: crash_function pattern intentionally REMOVED.
     # After dataset_sanitizer.redact_stacktrace_frames() runs, the critic
     # cannot independently verify any function name against the stacktrace.
@@ -182,6 +215,9 @@ class FactAccumulator:
         # key → (category, value_string)
         # Using OrderedDict so render() is deterministic and insertion-ordered.
         self._facts: OrderedDict[str, tuple[str, str]] = OrderedDict()
+        # category → (existing_value, conflicting_value)
+        # Populated when a new confirmed fact contradicts an existing one.
+        self._contradictions: dict[str, tuple[str, str]] = {}
 
     # ── public ──────────────────────────────────────────────────────────────
 
@@ -211,6 +247,21 @@ class FactAccumulator:
                     key = f"{category}:{key_name}"
                     value = match.group(2) if len(match.groups()) >= 2 else match.group(1)
 
+                # Contradiction detection: same category, different value.
+                # Check whether any existing fact has the same category but a different value.
+                # If so, record the conflict for warning injection — do NOT overwrite.
+                existing_in_category = [
+                    (k, v) for k, v in self._facts.items()
+                    if k.startswith(f"{category}:") and k != key
+                ]
+                if existing_in_category:
+                    existing_key, (_, existing_val) = existing_in_category[0]
+                    # Only flag as contradiction if the categories warrant it
+                    if category in ("delimiter", "reads_until", "constant"):
+                        self._contradictions[category] = (existing_val, value.strip())
+                    # First-wins: do not overwrite existing fact
+                    continue
+
                 self._facts[key] = (category, value.strip())
 
     def render(self) -> str:
@@ -228,6 +279,15 @@ class FactAccumulator:
             label = key.split(":", 1)[1] if ":" in key else key
             lines.append(f"  • {label} = {value}  [{category}]")
 
+        if self._contradictions:
+            lines.append("")
+            lines.append("FACT CONFLICTS — resolve by reading the source before writing code:")
+            for category, (old_val, new_val) in self._contradictions.items():
+                lines.append(
+                    f"  ⚠ [{category}] Prior confirmed: '{old_val}' vs new claim: '{new_val}'. "
+                    f"READ the relevant source file to determine which is correct."
+                )
+
         lines.append(
             "If your analysis contradicts any of the above, "
             "trust these values — they were extracted from the actual container.\n"
@@ -237,6 +297,7 @@ class FactAccumulator:
     def reset(self) -> None:
         """Clear all accumulated facts (call between CVE tasks)."""
         self._facts.clear()
+        self._contradictions.clear()
 
     def __len__(self) -> int:
         return len(self._facts)
