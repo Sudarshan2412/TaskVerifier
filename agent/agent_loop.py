@@ -82,6 +82,16 @@ def _extract_approach_note(poc_code: str, feedback_text: str) -> str:
             fmt_desc = fmt_match.group(1).strip().rstrip('*').strip()
             notes.append(f"fmt:{fmt_desc[:80]}")
 
+        # Delimiter strategy classifier (P7)
+        if re.search(r"fputc\s*\(\s*(?:'\\0'|0x00|0)\s*,\s*\w+\s*\)", poc_code) or r"\0" in poc_code:
+            notes.append("delim:null")
+        elif re.search(r"0x5C.*0x0A|'\\\\'.*'\\n'", poc_code, re.DOTALL):
+            notes.append("delim:backslash-newline")
+        elif re.search(r"fprintf\s*\([^,]+,\s*\"[^\"]*\\n\"", poc_code) or re.search(r"fputc\s*\(\s*(?:'\\n'|0x0A|10)\s*,\s*\w+\s*\)", poc_code):
+            notes.append("delim:newline")
+        elif ">> 24" in poc_code or "<< 24" in poc_code or ">> 8" in poc_code:
+            notes.append("delim:length-prefixed")
+
     # Operator or opcode value mentioned in feedback
     # Match "operator ... 0x17" or "opcode ... 0x17" with up to 3 words between
     op_match = re.search(
@@ -190,17 +200,23 @@ def run_agent(
     image_name = cve_entry.get("docker_image") or cve_entry.get("docker_image_vul") or "cybergym-sandbox:latest"
     discovered_format = ""
     try:
-        discovered_format = discover_fuzz_target_format(cve_entry, image_name)
+        discovered_format = discover_fuzz_target_format(cve_entry, image_name, fact_acc)
     except Exception as e:
         logger.error(f"Format discovery failed: {e}")
 
-    for attempt in range(1, max_attempts + 1):
+    attempt = 1
+    duplicate_retries = 0
+    stuck_counter = 0
+    last_fingerprint = ""
+    last_status = ""
+
+    while attempt <= max_attempts:
         logger.debug(f"CVE {cve_id}: Attempt {attempt}/{max_attempts}")
         sl.log_attempt_header(attempt, max_attempts)
 
         # ── PROMPT ───────────────────────────────────────────────────────────
         try:
-            if attempt == 1:
+            if attempt == 1 and duplicate_retries == 0:
                 prompt = build_initial_prompt(cve_entry, few_shot_examples)
                 if discovered_format:
                     prompt += f"\n\n{discovered_format}\n"
@@ -211,9 +227,10 @@ def run_agent(
                     feedback_text=last_feedback_text,
                     hallucinated_symbols=last_hallucinated_symbols,
                     previous_poc=last_poc,
-                    attempt_number=attempt - 1,
+                    attempt_number=attempt - 1 if duplicate_retries == 0 else attempt,
                     confirmed_facts=fact_acc.render(),
                     failed_approaches=retry_mem.render(),
+                    discovered_format=discovered_format,
                 )
                 sl.log_prompt_built("feedback", len(prompt))
                 # NEW: log what feedback is being sent so you can follow the loop
@@ -282,6 +299,10 @@ def run_agent(
                     "verifier_feedback": last_feedback_text, "fuzzer_output": "", "fuzzer_cmd": ""
                 })
                 hallucinated_per_attempt.append([])
+                duplicate_retries += 1
+                if duplicate_retries >= 3:
+                    attempt += 1
+                    duplicate_retries = 0
                 continue
             seen_poc_hashes.add(poc_hash)
             
@@ -305,6 +326,10 @@ def run_agent(
                     "verifier_feedback": last_feedback_text, "fuzzer_output": "", "fuzzer_cmd": ""
                 })
                 hallucinated_per_attempt.append([])
+                duplicate_retries += 1
+                if duplicate_retries >= 3:
+                    attempt += 1
+                    duplicate_retries = 0
                 continue
             
             recent_fingerprints.append(fingerprint)
@@ -327,6 +352,8 @@ def run_agent(
             )
             if attempt < max_attempts:
                 time.sleep(INTER_ATTEMPT_SLEEP_SECONDS)
+            attempt += 1
+            duplicate_retries = 0
             continue
 
         # ── HALLUCINATION DETECTION ──────────────────────────────────────────
@@ -437,6 +464,25 @@ def run_agent(
                 structure_notes=structure_note,
             )
 
+            # ── PROGRESS TRACKING (P9) ───────────────────────────────────────────
+            current_status = result.status
+            if current_status == last_status and fingerprint == last_fingerprint:
+                stuck_counter += 1
+            else:
+                stuck_counter = 0
+                last_status = current_status
+                last_fingerprint = fingerprint
+
+            if stuck_counter >= 3:
+                logger.warning(f"CVE {cve_id}: STUCK DETECTED. No progress for 3 attempts. Terminating early.")
+                sl.log_outcome(False, attempt, "stuck_no_progress")
+                return AgentResult(
+                    cve_id=cve_id, success=False, attempts=attempt,
+                    final_poc=last_poc, failure_reason="stuck_no_progress",
+                    transcript=transcript,
+                    hallucinated_symbols_per_attempt=hallucinated_per_attempt
+                )
+
         # ── TRANSCRIPT ENTRY ─────────────────────────────────────────────────
         exec_details = result.details.get("execution", {}) if hasattr(result, "details") else {}
         transcript.append({
@@ -484,6 +530,8 @@ def run_agent(
 
         if attempt < max_attempts:
             time.sleep(INTER_ATTEMPT_SLEEP_SECONDS)
+        attempt += 1
+        duplicate_retries = 0
 
     # ── ALL ATTEMPTS EXHAUSTED ────────────────────────────────────────────────
     logger.warning(f"CVE {cve_id}: FAILURE after {max_attempts} attempts")

@@ -317,6 +317,7 @@ def build_feedback_prompt(
     attempt_number: int,
     confirmed_facts: str = "",
     failed_approaches: str = "",
+    discovered_format: str = "",
 ) -> str:
     """
     Build a retry prompt after a previous attempt failed.
@@ -363,6 +364,11 @@ def build_feedback_prompt(
     # Injected after facts so the LLM knows what NOT to try.
     if failed_approaches:
         prompt += f"{failed_approaches}\n"
+
+    # ── Discovered Format ────────────────────────────────────────────────
+    # Reinject the format rules discovered at the beginning (P3).
+    if discovered_format:
+        prompt += f"{discovered_format}\n"
 
     # ── Core retry context ────────────────────────────────────────────────
     prompt += (

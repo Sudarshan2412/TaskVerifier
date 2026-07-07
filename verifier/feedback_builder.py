@@ -259,7 +259,7 @@ def _is_low_quality_feedback(text: str) -> bool:
 
     return False
 
-def discover_fuzz_target_format(cve_entry: dict, image_name: str) -> str:
+def discover_fuzz_target_format(cve_entry: dict, image_name: str, fact_acc=None) -> str:
     """Uses the critic tools to discover the expected input format before attempt 1.
 
     Returns a structured block with HEADER_FORMAT, STRING_DELIMITER, and
@@ -288,7 +288,7 @@ def discover_fuzz_target_format(cve_entry: dict, image_name: str) -> str:
     # ── P8: Validate and structure the discovery output ──────────────────
     # Use a cheap second call to extract the three critical fields from the
     # free-form discovery text.  If any field is missing, re-prompt once.
-    structured = _structure_format_discovery(raw_analysis, fuzz_target, image_name)
+    structured = _structure_format_discovery(raw_analysis, fuzz_target, image_name, fact_acc)
     if structured:
         return structured
 
@@ -296,7 +296,7 @@ def discover_fuzz_target_format(cve_entry: dict, image_name: str) -> str:
     return f"Fuzz Target Input Format Discovery (from {fuzz_target}):\n{raw_analysis}"
 
 
-def _structure_format_discovery(raw_analysis: str, fuzz_target: str, image_name: str) -> str:
+def _structure_format_discovery(raw_analysis: str, fuzz_target: str, image_name: str, fact_acc=None) -> str:
     """Extract structured format fields from the raw discovery text.
 
     Returns the structured block, or \"\" if extraction fails.
@@ -362,6 +362,12 @@ def _structure_format_discovery(raw_analysis: str, fuzz_target: str, image_name:
             f"Do NOT write raw XML or raw text.  Write the binary header first, then each\n"
             f"delimited field in the order specified above.\n"
         )
+        if fact_acc is not None:
+            if delim != "UNKNOWN":
+                fact_acc._facts["delimiter:string_delimiter"] = ("delimiter", delim)
+            if header != "UNKNOWN":
+                fact_acc._facts["constant:header_format"] = ("constant", header)
+
         print(f"[PRE-DISCOVERY] ✅ Structured format extracted successfully")
         return block
 
@@ -441,8 +447,8 @@ def build_feedback(
             
         hex_dump = execute_docker_tool("READ_HEX", "/tmp/poc", image_name)
 
-        sys_msg = (
-            "You are a Senior Security Engineer investigating why a PoC exploit failed. "
+        format_sys_msg = (
+            "You are a Format Diagnostic Engineer investigating why a PoC exploit failed. "
             "You have access to a terminal in the target Docker container.\n\n"
             "MANDATORY FIRST STEP: Before any analysis, you MUST search the target source "
             "for the exact function definitions, struct sizes, or constants involved in parsing "
@@ -458,18 +464,14 @@ def build_feedback(
             "1. ONE command per turn.\n"
             "2. NEVER guess a constant value. If SEARCH returns nothing, try a broader query.\n"
             "3. Once you have confirmed all constants, state them explicitly using the exact phrase 'X confirmed as Y' (e.g., 'MAX_SIZE confirmed as 4096'). Do not use generic assignments like 'X = Y'. Then output your final analysis.\n"
-            "4. Do NOT contradict a previous analysis unless you have new tool evidence.\n"
+            "4. PRIOR CONCLUSIONS: You will be provided with 'CONFIRMED FACTS' extracted from previous attempts. Treat these as established truth. If you disagree with any of them, you MUST cite specific new tool output that contradicts it.\n"
             "5. If a previous analysis identified the correct file format or attack vector, "
             "preserve that finding — only revise it if tool output proves it wrong.\n"
-            "6. ALWAYS check the crash trace call stack to determine which parsing stage the vulnerable function belongs to. Do not assume the vulnerability is in the first or most obvious code path — trace the actual call chain.\n"
-            "7. For binary file formats (CFF, TIFF, DICOM, etc.), state the EXACT byte offset and "
+            "6. For binary file formats (CFF, TIFF, DICOM, etc.), state the EXACT byte offset and "
             "encoding of each field. Vague instructions like 'fix the offset' are useless.\n"
-            "8. Always start by clearly stating the root cause and the exact code changes needed. Be precise and detail all necessary structural changes and offsets. End your analysis naturally once complete.\n"
-            "9. AVOID CYCLES: You will be provided with a history of failed approaches. Do NOT suggest a strategy that has already failed. If two formats/approaches both fail, do not toggle between them. Instead, use SEARCH to find the correct structural requirements to make the original approach work.\n"
-            "10. DO NOT GUESS OPCODES: If the failure involves an unrecognized operator, instruction, or token, DO NOT guess its byte value. You MUST use SEARCH to locate the exact opcode definitions in the target's source code (e.g., looking in header files or token tables) to verify the correct byte sequence.\n"
-            "11. Trace execution backwards from the vulnerable function. Identify exactly which struct sizes, bounds checks (e.g., dataCount > 0), or stack limits (e.g., maxstack) must be satisfied to reach it.\n"
-            "12. The Vulnerability Description is GROUND TRUTH. Do not invent alternative code paths or assert that the vulnerability occurs elsewhere (e.g., during glyph loading instead of parsing). Your job is strictly to figure out why the PoC failed to reach the specific path described.\n"
-            "13. CRITICAL: DO NOT WRITE ANY C CODE. Any code blocks in your output will be DELETED. Providing code wastes your token budget and delays the fix. Your output will be read by an automated agent. Do not provide a corrected PoC or code blocks. Provide ONLY your textual analysis and the specific byte offsets/values that need to change.\n"
+            "7. DO NOT GUESS OPCODES: If the failure involves an unrecognized operator, instruction, or token, DO NOT guess its byte value. You MUST use SEARCH to locate the exact opcode definitions in the target's source code (e.g., looking in header files or token tables) to verify the correct byte sequence.\n"
+            "8. CRITICAL: DO NOT WRITE ANY C CODE. Any code blocks in your output will be DELETED. Providing code wastes your token budget and delays the fix. Your output will be read by an automated agent. Do not provide a corrected PoC or code blocks. Provide ONLY your textual analysis and the specific byte offsets/values that need to change.\n"
+            "9. TWO-PHASE CRITIC: Your ONLY job is to determine if the input format was accepted by the parser. If the format is wrong, explain how to fix it. If the parser ACCEPTED the format and the failure is due to payload content not triggering the vulnerability, you MUST end your response with the exact phrase: 'FORMAT ACCEPTED'.\n"
         )
 
         usr_msg = (
@@ -520,8 +522,29 @@ def build_feedback(
                 f"Use SEARCH: {fuzz_target} or SEARCH: LLVMFuzzerTestOneInput to find the harness source file immediately.\n"
             )
 
-        print("\n[CRITIC] 🧠 Investigating execution failure with tools...")
-        analysis = _strip_emergency_preamble(call_critic_llm(sys_msg, usr_msg, image_name))
+        print("\n[CRITIC] 🧠 Phase 1: Investigating format acceptance with tools...")
+        format_analysis = _strip_emergency_preamble(call_critic_llm(format_sys_msg, usr_msg, image_name))
+
+        if "FORMAT ACCEPTED" in format_analysis.upper():
+            print("\n[CRITIC] ✅ Format accepted! Phase 2: Investigating payload content...")
+            content_sys_msg = (
+                "You are a Senior Security Engineer investigating why a structurally valid payload failed to trigger a crash. "
+                "You have access to a terminal in the target Docker container.\n\n"
+                "To search: SEARCH: <keyword>\n"
+                "To read a file: READ: /absolute/path/to/file.c\n\n"
+                "RULES:\n"
+                "1. ONE command per turn.\n"
+                "2. ALWAYS check the crash trace call stack to determine which parsing stage the vulnerable function belongs to. Do not assume the vulnerability is in the first or most obvious code path — trace the actual call chain.\n"
+                "3. AVOID CYCLES: You will be provided with a history of failed approaches. Do NOT suggest a strategy that has already failed.\n"
+                "4. Trace execution backwards from the vulnerable function. Identify exactly which struct sizes, bounds checks, or stack limits must be satisfied to reach it.\n"
+                "5. The Vulnerability Description is GROUND TRUTH. Your job is strictly to figure out why the PoC failed to reach the specific path described.\n"
+                "6. CRITICAL: DO NOT WRITE ANY C CODE. Any code blocks in your output will be DELETED. Provide ONLY your textual analysis.\n"
+            )
+            content_analysis = _strip_emergency_preamble(call_critic_llm(content_sys_msg, usr_msg, image_name))
+            analysis = f"Format check passed.\n\nContent Analysis:\n{content_analysis}"
+        else:
+            analysis = format_analysis
+
 
         # ── P9: Critic Failure Escalation ────────────────────────────────────
         # If the critic exhausted its tool turns without producing a real
