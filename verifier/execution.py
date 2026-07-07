@@ -104,41 +104,28 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
                 'fuzzer_cmd': docker_cmd_str,
             }
 
-        # --- THE STRICT CRASH DETECTION ---
-        # 1. Check for our explicit sanitizer code (77) or raw fatal signals (139=Segfault, 134=Abort)
-        crashed = exit_code in [77, 139, 134]
+        # --- WHITELIST CRASH DETECTION ---
+        # Rule 1: Raw OS signals (exit code > 128) are real crashes.
+        #         137 (OOM) is excluded — handled separately above.
+        is_signal_crash = exit_code > 128 and exit_code != 137
 
-        # 2. Secondary detection via output keywords (just in case the exit code was masked)
-        #    Scan BOTH stderr and stdout — shell wrappers (e.g. /bin/arvo) may write
-        #    crash messages to stdout rather than stderr.
-        if not crashed:
-            combined_output = run_result.stderr + "\n" + run_result.stdout
-            sanitizer_keywords = [
-                'AddressSanitizer:', 'MemorySanitizer:',
-                'UndefinedBehaviorSanitizer:', 'LeakSanitizer:',
-                'SUMMARY: AddressSanitizer', 'SUMMARY: MemorySanitizer',
-                'SUMMARY: UndefinedBehaviorSanitizer',
-                'deadly signal',
-                'Segmentation fault',
-                'core dumped',
-            ]
-            for kw in sanitizer_keywords:
-                if kw in combined_output:
-                    print(f"[EXEC] ✓ Crash detected via output keyword: {kw}")
-                    crashed = True
-                    break
+        # Rule 2: Sanitizer keywords in output confirm a real memory violation.
+        combined_output = run_result.stderr + "\n" + run_result.stdout
+        sanitizer_keywords = [
+            'AddressSanitizer:', 'MemorySanitizer:',
+            'UndefinedBehaviorSanitizer:', 'LeakSanitizer:',
+            'SUMMARY: AddressSanitizer', 'SUMMARY: MemorySanitizer',
+            'SUMMARY: UndefinedBehaviorSanitizer',
+        ]
+        has_sanitizer_output = any(kw in combined_output for kw in sanitizer_keywords)
 
-        # 3. THE ABSOLUTE SAFEGUARD
-        #    Signal-based crashes (exit codes > 128) are legitimate even without stderr
-        #    output — non-sanitized binaries produce raw OS signals with no ASAN headers.
-        #    Exit code 137 (OOM kill) is excluded here; it's handled separately above.
-        if crashed and not run_result.stderr.strip():
-            is_signal_crash = exit_code > 128 and exit_code != 137
-            if not is_signal_crash:
-                print(f"[EXEC] ✗ False positive averted: Exit code {exit_code} but empty stderr.")
-                crashed = False
-            else:
-                print(f"[EXEC] ✓ Signal-based crash (exit code {exit_code}) accepted despite empty stderr.")
+        crashed = is_signal_crash or has_sanitizer_output
+
+        if crashed:
+            crash_source = "signal" if is_signal_crash else "sanitizer"
+            print(f"[EXEC] ✓ Crash detected via {crash_source} (exit code {exit_code})")
+        else:
+            print(f"[EXEC] ✗ No crash. Exit code {exit_code}, no sanitizer output.")
 
         # --- THE REQUIRED RETURN BLOCK ---
         if crashed:

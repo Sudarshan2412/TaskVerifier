@@ -1,5 +1,5 @@
 from verifier.compiler import compile_poc
-from verifier.sanitizer import run_and_parse
+from verifier.sanitizer import parse_asan_output
 from verifier.execution import check_execution
 from verifier.feedback_builder import build_feedback
 from verifier.hallucination_detector import detect_hallucinations
@@ -14,7 +14,7 @@ class VerifierResult:
     def __repr__(self):
         return f"VerifierResult(status={self.status!r}, feedback={self.feedback[:60]!r}...)"
 
-def _extract_real_asan(stderr: str) -> dict:
+def _extract_real_asan(stderr: str, exit_code: int = 0) -> dict:
     import re
     match = re.search(r'(AddressSanitizer|MemorySanitizer|UndefinedBehaviorSanitizer):\s*([^\n\r]+)', stderr)
     
@@ -25,13 +25,17 @@ def _extract_real_asan(stderr: str) -> dict:
             'crash_address': 'See terminal log', 
             'stack_frames': []
         }
-        
-    # If we got here, the exit code signaled a crash, but we couldn't parse the ASAN header.
-    # Don't say "Crash triggered" blindly, pass the actual stderr tail so the user/LLM can see it.
+    
+    # Signal-based crash with no sanitizer output (e.g. non-instrumented binary)
+    signal_num = exit_code - 128 if exit_code > 128 else 0
+    signal_names = {11: 'SIGSEGV (Segmentation fault)', 6: 'SIGABRT (Abort)', 
+                    8: 'SIGFPE (Floating point)', 4: 'SIGILL (Illegal instruction)'}
+    signal_desc = signal_names.get(signal_num, f'Signal {signal_num}')
+    
     return {
         'crashed': True, 
-        'crash_type': 'Raw Crash / Abnormal Exit (No ASAN header found)', 
-        'crash_address': 'Unknown', 
+        'crash_type': f'Raw Signal Crash: {signal_desc}', 
+        'crash_address': 'Unknown (no sanitizer instrumentation)', 
         'stack_frames': stderr[-1000:] if stderr else "NO STDERR OUTPUT"
     }
     
@@ -120,7 +124,7 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_a
     print(stderr_output[:1500]) # Print first 1500 chars to avoid terminal spam
     print("="*60 + "\n")
 
-    sanitizer_result = _extract_real_asan(stderr_output)
+    sanitizer_result = _extract_real_asan(stderr_output, exit_code=exec_result.get('exit_code', 0))
     details['sanitizer'] = sanitizer_result
 
     feedback = build_feedback(compiler_result, sanitizer_result, exec_result, 

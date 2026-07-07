@@ -1,47 +1,10 @@
-import subprocess
 import re
 import os
 
-def run_and_parse(binary_path: str) -> dict:
-    """
-    Runs the compiled binary. If it crashes, parses the ASan/UBSan output.
-    Returns: crash_type, crash_address, top 2 stack frames, and raw output.
-    """
-    env = os.environ.copy()
-    env['ASAN_OPTIONS'] = 'halt_on_error=1:detect_leaks=0'
+# NOTE: run_and_parse was removed — it contained a false-positive bug where any
+# non-zero exit code was blindly marked as crashed=True. All execution now goes
+# through verifier/execution.py which uses whitelist-based crash detection.
 
-    try:
-        result = subprocess.run(
-            [binary_path],
-            capture_output=True, text=True, timeout=10, env=env
-        )
-
-        if result.returncode == 0:
-            # Program ran fine — no crash.
-            return {'crashed': False, 'raw_output': result.stderr}
-
-        # It crashed — now parse the output
-        crash_info = parse_asan_output(result.stderr)
-        crash_info['crashed'] = True
-        crash_info['raw_output'] = result.stderr
-        return crash_info
-    
-    except subprocess.TimeoutExpired:
-        return {
-            'crashed': True,
-            'crash_type': 'timeout',
-            'crash_address': 'unknown',
-            'stack_frames': [],
-            'raw_output': f'Program timed out after 10 seconds'
-        }
-    except FileNotFoundError:
-        return {
-            'crashed': True,
-            'crash_type': 'binary_not_found',
-            'crash_address': 'unknown',
-            'stack_frames': [],
-            'raw_output': f'Binary not found: {binary_path}'
-        }
 
 def parse_asan_output(stderr: str) -> dict:
     """
