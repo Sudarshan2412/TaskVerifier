@@ -145,8 +145,8 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
     (
         "delimiter",
         re.compile(
-            r"(?:delimiter|terminator|separator)\s+(?:is\s+|confirmed\s+as\s+|uses\s+)?"
-            r"(null[- ]?byte|\\0|backslash[- ]newline|0x5C 0x0A|length prefix|length-prefixed|4-byte length)",
+            r"(?:delimiter|terminator|separator)\s+(?:is\s+|confirmed\s+as\s+|uses\s+)?(null[- ]?byte|\\0|backslash[- ]newline|0x5C 0x0A|length prefix|length-prefixed|4-byte length)"
+            r"|uses\s+(null[- ]?byte|\\0|backslash[- ]newline|0x5C 0x0A|length prefix|length-prefixed|4-byte length)\s+as\s+(?:the\s+)?(?:string\s+)?(?:delimiter|terminator|separator)",
             re.IGNORECASE,
         ),
     ),
@@ -265,7 +265,8 @@ class FactAccumulator:
                     if existing_val != value.strip():
                         if category in ("delimiter", "reads_until", "constant", "endianness", "field_count"):
                             self._contradictions[category] = (existing_val, value.strip())
-                    # First-wins: do not overwrite
+                            # Last-wins: Overwrite with the newly confirmed finding
+                            self._facts[key] = (category, value.strip())
                     continue
 
                 # 2. Same category, different key (e.g. delimiter:\0 vs delimiter:backslash-newline)
@@ -276,8 +277,11 @@ class FactAccumulator:
                         if k.startswith(f"{category}:")
                     ]
                     if existing_in_category:
-                        _, (_, existing_val) = existing_in_category[0]
+                        old_key, (_, existing_val) = existing_in_category[0]
                         self._contradictions[category] = (existing_val, value.strip())
+                        # Delete the old contradictory fact so we don't force the LLM to use it
+                        del self._facts[old_key]
+                        self._facts[key] = (category, value.strip())
                         continue
 
                 self._facts[key] = (category, value.strip())

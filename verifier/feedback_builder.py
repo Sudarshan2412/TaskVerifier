@@ -362,11 +362,6 @@ def _structure_format_discovery(raw_analysis: str, fuzz_target: str, image_name:
             f"Do NOT write raw XML or raw text.  Write the binary header first, then each\n"
             f"delimited field in the order specified above.\n"
         )
-        if fact_acc is not None:
-            if delim != "UNKNOWN":
-                fact_acc._facts["delimiter:string_delimiter"] = ("delimiter", delim)
-            if header != "UNKNOWN":
-                fact_acc._facts["constant:header_format"] = ("constant", header)
 
         print(f"[PRE-DISCOVERY] ✅ Structured format extracted successfully")
         return block
@@ -414,7 +409,7 @@ def build_feedback(
         errors = compiler_result.get('errors', [])
         err_msg = errors[0].get('message', 'Unknown error') if errors else 'Unknown error'
 
-        sys_msg = "You are a C Compiler Expert. Explain the compiler error concisely. Do NOT use tools. DO NOT WRITE ANY C CODE. Any code blocks in your output will be DELETED."
+        sys_msg = "You are a C Compiler Expert. Explain the compiler error concisely. DO NOT WRITE ANY C CODE. Any code blocks in your output will be DELETED."
         usr_msg = (
             f"C Code:\n```c\n{poc_code}\n```\n"
             f"Compiler Error:\n{err_msg}\n"

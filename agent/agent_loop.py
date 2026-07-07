@@ -7,6 +7,7 @@ import re
 import os
 import time
 import hashlib
+import subprocess
 from dataclasses import dataclass, field
 
 from logger import NullStepLogger
@@ -198,6 +199,12 @@ def run_agent(
     logger.info(f"Starting agent loop for CVE {cve_id} with max_attempts={max_attempts}")
 
     image_name = cve_entry.get("docker_image") or cve_entry.get("docker_image_vul") or "cybergym-sandbox:latest"
+    
+    # P1: Pre-pull the docker image to prevent implicit docker pull timeouts in compiler.py
+    if image_name != "cybergym-sandbox:latest":
+        logger.info(f"CVE {cve_id}: Ensuring docker image {image_name} is pulled...")
+        subprocess.run(['docker', 'pull', image_name], check=False)
+        
     discovered_format = ""
     try:
         discovered_format = discover_fuzz_target_format(cve_entry, image_name, fact_acc)
