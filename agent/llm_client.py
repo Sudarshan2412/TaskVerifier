@@ -21,7 +21,7 @@ MINIMAX_M25_MODEL = "minimax/minimax-m2.5"
 QWEN_37_PLUS_MODEL = "qwen/qwen-3.7-plus"
 KIMI_K26_MODEL = "moonshotai/kimi-k2.6"
 
-DEFAULT_MODEL = KIMI_K26_MODEL
+DEFAULT_MODEL = DEEPSEEK_MODEL
 DEFAULT_MAX_RESPONSE_TOKENS = int(os.environ.get("MAX_RESPONSE_TOKENS", "16384"))
 
 

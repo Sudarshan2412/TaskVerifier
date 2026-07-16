@@ -25,71 +25,86 @@ FEW_SHOT_EXAMPLES_PATH = "few_shot_examples.json"
 # ---------------------------------------------------------------------------
 # Function-body stubbing
 # ---------------------------------------------------------------------------
-# Matches a C function definition body delimited by a single level of braces.
-# The substitution replaces the body with a fixed placeholder, retaining only
-# the signature.  This removes the vulnerable code path from what the agent
-# sees while preserving the type information it needs to understand the API.
-#
-# Deliberately format-agnostic: operates on any C source regardless of project,
-# naming convention, or vulnerability class.  Does NOT match declarations
-# (no body) or preprocessor macros.
-_FUNC_BODY_RE = re.compile(
-    r"""
-    # Match a C function definition: return type(s) + name + params + body.
-    # We keep everything up to and including the opening '{', then elide the
-    # body and the closing '}'.
-    (?P<sig>
-        [^\n{};]+        # return type and function name (no braces, no stmts)
-        \([^)]*\)        # parameter list — single-level, no nested parens
-        \s*
-    )
-    \{
-    (?P<body>
-        [^{}]*           # body content that contains no nested braces
-        (?:
-            \{[^{}]*\}   # one level of nested braces (e.g. if/for blocks)
-            [^{}]*
-        )*
-    )
-    \}
-    """,
-    re.VERBOSE | re.DOTALL,
+
+# Matches editorial comments that label caller/precondition context.
+# Generic keywords: caller, pre-patch, vulnerable, bug, trigger, crash.
+# Stripping these prevents the caller-snippet precondition from leaking
+# (e.g. "/* caller, pre-patch: */" above an if-block that names the trigger).
+_EDITORIAL_LABEL_RE = re.compile(
+    r'/\*\s*(?:caller|pre-patch|vulnerable|bug|trigger|crash)[^*]*\*/',
+    re.IGNORECASE | re.DOTALL,
 )
 
 
 def _stub_function_bodies(source: str) -> str:
     """
-    Replace function bodies with ``{ /* ... */ }``, retaining only signatures.
+    Replace ALL brace-delimited blocks (function bodies AND bare if/for/while
+    blocks) with ``{ /* ... */ }``, then strip editorial comments that label
+    caller/precondition context.
 
-    Example::
+    Uses a character-level brace-depth counter rather than a regex, so it
+    handles arbitrary nesting depth without risk of partial body leakage.
 
-        FT_LOCAL_DEF( FT_Error )
-        cff_blend_doBlend( CFF_SubFont subFont,
-                           CFF_Parser  parser,
-                           FT_UInt     numBlends )
-        {
-            ... 80 lines of vulnerable logic ...
-        }
+    Also strips string/char literal contents to avoid false brace matches
+    inside quoted strings.
 
-    becomes::
+    Rationale: the original single-level regex left bare top-level ``if``
+    blocks intact, leaking the exact precondition (e.g.
+    ``if (dict->subdict != NULL) { ... }``) even after the function body was
+    stubbed.  The brace-depth counter stubs ALL blocks uniformly.
 
-        FT_LOCAL_DEF( FT_Error )
-        cff_blend_doBlend( CFF_SubFont subFont,
-                           CFF_Parser  parser,
-                           FT_UInt     numBlends )
-        { /* ... */ }
-
-    Rationale: injecting the full function body reveals the exact memory
-    operation that causes the crash (ground-truth leakage).  Signatures
-    retain the type information the agent legitimately needs to construct
-    correct function calls without disclosing the vulnerable code path.
-
-    Format-agnostic: applies to any C source regardless of project or
-    vulnerability class.  Leaves declarations and macros untouched.
+    Format-agnostic: applies to any C source regardless of project, parser,
+    or vulnerability class.
     """
     if not source:
         return source
-    return _FUNC_BODY_RE.sub(r'\g<sig>{ /* ... */ }', source)
+
+    result = []
+    i = 0
+    n = len(source)
+    while i < n:
+        brace_pos = source.find('{', i)
+        if brace_pos == -1:
+            result.append(source[i:])
+            break
+        # Emit everything up to (but not including) the opening brace
+        result.append(source[i:brace_pos])
+        # Walk forward tracking depth to find the matching closing brace,
+        # skipping string/char literal contents so braces inside them are
+        # not counted.
+        depth = 0
+        j = brace_pos
+        while j < n:
+            ch = source[j]
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    break
+            elif ch in ('"', "'"):
+                # Skip string/char literal
+                quote = ch
+                j += 1
+                while j < n and source[j] != quote:
+                    if source[j] == '\\':
+                        j += 1  # skip escaped character
+                    j += 1
+            j += 1
+        # Replace the entire block [brace_pos..j] with the stub
+        result.append('{ /* ... */ }')
+        i = j + 1
+
+    output = ''.join(result)
+
+    # Second pass: strip editorial comments that label caller/precondition context.
+    # These survive brace-stubbing because they appear OUTSIDE braces.
+    output = _EDITORIAL_LABEL_RE.sub('/* ... */', output)
+
+    # Collapse any resulting excess blank lines
+    import re as _re
+    output = _re.sub(r'\n{3,}', '\n\n', output)
+    return output
 
 
 # ---------------------------------------------------------------------------
@@ -245,13 +260,6 @@ def build_initial_prompt(cve_entry: dict, few_shot_examples: list) -> str:
         f"Expected crash: {crash_description}\n"
     )
     
-    if cve_entry.get("sanitizer_type") == "none":
-        prompt += (
-            "\nNote: This binary has NO sanitizer instrumentation (no ASAN/MSAN/UBSAN). "
-            "A successful crash will produce a raw signal (e.g., segfault, abort) "
-            "with no sanitizer output on stderr.\n"
-        )
-    
     # Pull additional source context from the container image.
     # General-purpose: parses the crash stacktrace, greps the container for
     # those functions.  After dataset_sanitizer redacts stack frame identifiers,
@@ -309,6 +317,7 @@ def build_feedback_prompt(
     attempt_number: int,
     confirmed_facts: str = "",
     failed_approaches: str = "",
+    discovered_format: str = "",
 ) -> str:
     """
     Build a retry prompt after a previous attempt failed.
@@ -356,6 +365,11 @@ def build_feedback_prompt(
     if failed_approaches:
         prompt += f"{failed_approaches}\n"
 
+    # ── Discovered Format ────────────────────────────────────────────────
+    # Reinject the format rules discovered at the beginning (P3).
+    if discovered_format:
+        prompt += f"{discovered_format}\n"
+
     # ── Core retry context ────────────────────────────────────────────────
     prompt += (
         f"You are continuing to work on CVE {cve_id}.\n"
@@ -367,13 +381,6 @@ def build_feedback_prompt(
         f"Verifier feedback:\n"
         f"{feedback_text}\n"
     )
-    
-    if cve_entry.get("sanitizer_type") == "none":
-        prompt += (
-            "\nNote: This binary has NO sanitizer instrumentation (no ASAN/MSAN/UBSAN). "
-            "A successful crash will produce a raw signal (e.g., segfault, abort) "
-            "with no sanitizer output on stderr.\n"
-        )
     
     # ── Hallucinated symbols ──────────────────────────────────────────────
     if hallucinated_symbols:

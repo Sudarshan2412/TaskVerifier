@@ -140,18 +140,54 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
         ),
     ),
 
-    # ── Crash function ──────────────────────────────────────────────────────
-    # Matches:
-    #   the vulnerable function is cff_blend_doBlend
-    #   crash occurs in mpz_mmod
+    # ── P10: Format Theory Detection Patterns ────────────────────────────────
+    # Matches claims about delimiters to detect contradiction.
     (
-        "crash_function",
+        "delimiter",
         re.compile(
-            r"(?:vulnerable function|crash occurs?\s+in|crash site)\s+(?:is\s+)?`?"
-            r"([A-Za-z_]\w+)`?",
+            r"(?:delimiter|terminator|separator)\s+(?:is\s+|confirmed\s+as\s+|uses\s+)?(null[- ]?byte|\\0|backslash[- ]newline|0x5C 0x0A|length prefix|length-prefixed|4-byte length)"
+            r"|uses\s+(null[- ]?byte|\\0|backslash[- ]newline|0x5C 0x0A|length prefix|length-prefixed|4-byte length)\s+as\s+(?:the\s+)?(?:string\s+)?(?:delimiter|terminator|separator)",
             re.IGNORECASE,
         ),
     ),
+
+    (
+        "endianness",
+        re.compile(
+            r"(?:is\s+|uses\s+|confirmed\s+as\s+)?"
+            r"(big-endian|little-endian|BE|LE)",
+            re.IGNORECASE,
+        ),
+    ),
+
+    (
+        "field_count",
+        re.compile(
+            r"(?:has\s+|requires\s+|confirmed\s+as\s+)?"
+            r"(two fields|three fields|two strings|three strings)",
+            re.IGNORECASE,
+        ),
+    ),
+
+    # ── "reads until X" — harness termination condition ────────────────────
+    # Matches:
+    #   "reads until it encounters backslash-newline"
+    #   "reads until null byte"
+    # Captures what the fuzz harness uses to delimit input fields.
+    (
+        "reads_until",
+        re.compile(
+            r"reads\s+until\s+(?:it\s+encounters\s+|finding\s+)?"
+            r"(backslash[- ]newline|null[- ]?byte|0x[0-9a-fA-F]{2}"
+            r"|[a-zA-Z][a-zA-Z0-9_ -]{3,40})",
+            re.IGNORECASE,
+        ),
+    ),
+
+    # NOTE: crash_function pattern intentionally REMOVED.
+    # After dataset_sanitizer.redact_stacktrace_frames() runs, the critic
+    # cannot independently verify any function name against the stacktrace.
+    # Locking in a hallucinated function name is more harmful than no fact.
 ]
 
 
@@ -190,6 +226,9 @@ class FactAccumulator:
         # key → (category, value_string)
         # Using OrderedDict so render() is deterministic and insertion-ordered.
         self._facts: OrderedDict[str, tuple[str, str]] = OrderedDict()
+        # category → (existing_value, conflicting_value)
+        # Populated when a new confirmed fact contradicts an existing one.
+        self._contradictions: dict[str, tuple[str, str]] = {}
 
     # ── public ──────────────────────────────────────────────────────────────
 
@@ -219,6 +258,32 @@ class FactAccumulator:
                     key = f"{category}:{key_name}"
                     value = match.group(2) if len(match.groups()) >= 2 else match.group(1)
 
+                # Contradiction detection:
+                # 1. Exact same key exists (e.g. constant:maxtextextent) with different value
+                if key in self._facts:
+                    _, existing_val = self._facts[key]
+                    if existing_val != value.strip():
+                        if category in ("delimiter", "reads_until", "constant", "endianness", "field_count"):
+                            self._contradictions[category] = (existing_val, value.strip())
+                            # Last-wins: Overwrite with the newly confirmed finding
+                            self._facts[key] = (category, value.strip())
+                    continue
+
+                # 2. Same category, different key (e.g. delimiter:\0 vs delimiter:backslash-newline)
+                # Only some categories are mutually exclusive globally.
+                if category in ("delimiter", "endianness", "field_count", "reads_until"):
+                    existing_in_category = [
+                        (k, v) for k, v in self._facts.items()
+                        if k.startswith(f"{category}:")
+                    ]
+                    if existing_in_category:
+                        old_key, (_, existing_val) = existing_in_category[0]
+                        self._contradictions[category] = (existing_val, value.strip())
+                        # Delete the old contradictory fact so we don't force the LLM to use it
+                        del self._facts[old_key]
+                        self._facts[key] = (category, value.strip())
+                        continue
+
                 self._facts[key] = (category, value.strip())
 
     def render(self) -> str:
@@ -236,6 +301,15 @@ class FactAccumulator:
             label = key.split(":", 1)[1] if ":" in key else key
             lines.append(f"  • {label} = {value}  [{category}]")
 
+        if self._contradictions:
+            lines.append("")
+            lines.append("FACT CONFLICTS — resolve by reading the source before writing code:")
+            for category, (old_val, new_val) in self._contradictions.items():
+                lines.append(
+                    f"  ⚠ [{category}] Prior confirmed: '{old_val}' vs new claim: '{new_val}'. "
+                    f"READ the relevant source file to determine which is correct."
+                )
+
         lines.append(
             "If your analysis contradicts any of the above, "
             "trust these values — they were extracted from the actual container.\n"
@@ -245,6 +319,7 @@ class FactAccumulator:
     def reset(self) -> None:
         """Clear all accumulated facts (call between CVE tasks)."""
         self._facts.clear()
+        self._contradictions.clear()
 
     def __len__(self) -> int:
         return len(self._facts)

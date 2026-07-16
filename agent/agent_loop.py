@@ -7,6 +7,7 @@ import re
 import os
 import time
 import hashlib
+import subprocess
 from dataclasses import dataclass, field
 
 from logger import NullStepLogger
@@ -20,6 +21,7 @@ from agent.fact_accumulator import FactAccumulator
 from agent.retry_memory import RetryMemory
 from verifier import VerifierPipeline
 from verifier.hallucination_detector import detect_hallucinations
+from verifier.feedback_builder import discover_fuzz_target_format
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +61,37 @@ def _extract_approach_note(poc_code: str, feedback_text: str) -> str:
     Used to populate RetryMemory with enough detail to distinguish attempts
     that all resulted in "no_crash" but tried different internal structures.
 
-    Format-agnostic: uses generic patterns for operator values, version numbers,
-    and format magic strings.  Does not contain any CVE-specific logic.
+    Format-agnostic: uses generic patterns for hex constants, version numbers,
+    and 4-character format tags.  Does not contain any parser-specific or CVE-specific logic.
 
     Returns a string of up to 120 chars, or "" if nothing useful is found.
     """
     notes = []
+
+    # Extract top-level binary format description from PoC comments.
+    # Agent PoCs frequently include a comment like:
+    #   /* Binary format: [4-byte header][string\backslash-newline][...] */
+    # Capturing this lets RetryMemory distinguish attempts that used
+    # structurally different formats even when their hex bytes overlap.
+    # Format-agnostic: any binary format PoC can include such a comment.
+    if poc_code:
+        fmt_match = re.search(
+            r'/[*]\s*(?:Binary\s+)?[Ff]ormat\s*:\s*([^\n*/]{10,120})',
+            poc_code,
+        )
+        if fmt_match:
+            fmt_desc = fmt_match.group(1).strip().rstrip('*').strip()
+            notes.append(f"fmt:{fmt_desc[:80]}")
+
+        # Delimiter strategy classifier (P7)
+        if re.search(r"fputc\s*\(\s*(?:'\\0'|0x00|0)\s*,\s*\w+\s*\)", poc_code) or r"\0" in poc_code:
+            notes.append("delim:null")
+        elif re.search(r"0x5C.*0x0A|'\\\\'.*'\\n'", poc_code, re.DOTALL):
+            notes.append("delim:backslash-newline")
+        elif re.search(r"fprintf\s*\([^,]+,\s*\"[^\"]*\\n\"", poc_code) or re.search(r"fputc\s*\(\s*(?:'\\n'|0x0A|10)\s*,\s*\w+\s*\)", poc_code):
+            notes.append("delim:newline")
+        elif ">> 24" in poc_code or "<< 24" in poc_code or ">> 8" in poc_code:
+            notes.append("delim:length-prefixed")
 
     # Operator or opcode value mentioned in feedback
     # Match "operator ... 0x17" or "opcode ... 0x17" with up to 3 words between
@@ -94,16 +121,40 @@ def _extract_approach_note(poc_code: str, feedback_text: str) -> str:
     if tag_matches:
         notes.append(f"tags={'|'.join(tag_matches[:3])}")
 
-    # Key structural keywords that distinguish approaches
-    for kw in ("INDEX", "vstore", "FDSelect", "CharStrings", "PrivateDict", "GlyphTable",
-               "endchar", "vsindex", "blend", "FDArray", "Charstring"):
-        if re.search(r'\b' + kw + r'\b', feedback_text, re.IGNORECASE):
-            notes.append(kw)
-            break  # one keyword is enough for disambiguation
+    # Generic hex constants (format-agnostic — any binary format uses these)
+    hex_matches = re.findall(r'0x[0-9a-fA-F]{2,}', feedback_text)
+    if hex_matches:
+        unique_hex = list(dict.fromkeys(hex_matches))[:4]
+        notes.append("hex:" + ",".join(unique_hex))
+
+    # 4-character format tags inside quotes or after '='/':' (e.g. 'ftyp', 'mdat', 'CFF ')
+    tag_matches = re.findall(r'(?:[=:\"\'\s])([A-Za-z][A-Za-z0-9 ]{3})(?:[\"\'\s,;])', feedback_text)
+    if tag_matches:
+        unique_tags = list(dict.fromkeys(t.strip() for t in tag_matches if t.strip()))[:3]
+        if unique_tags:
+            notes.append("tag:" + "|".join(unique_tags))
 
     if not notes:
         return ""
     return (", ".join(notes))[:120]
+
+def _structural_fingerprint(poc_code: str) -> str:
+    """
+    Creates a structural fingerprint of the C code by stripping comments,
+    string literals, numbers, and whitespace. This catches superficial variations
+    like changing a namespace string or a variable name while keeping the exact
+    same code structure.
+    """
+    # Remove comments
+    code = re.sub(r'//.*?\n|/\*.*?\*/', '', poc_code, flags=re.DOTALL)
+    # Remove string literals and char literals
+    code = re.sub(r'"(?:\\.|[^"\\])*"', '""', code)
+    code = re.sub(r"'(?:\\.|[^'\\])*'", "''", code)
+    # Replace numbers with 0
+    code = re.sub(r'\b\d+\b|\b0x[0-9a-fA-F]+\b', '0', code)
+    # Remove all whitespace
+    code = re.sub(r'\s+', '', code)
+    return hashlib.md5(code.encode()).hexdigest()
 
 
 def run_agent(
@@ -140,20 +191,42 @@ def run_agent(
     last_feedback_text = ""
     last_hallucinated_symbols = []
     seen_poc_hashes: set[str] = set()
+    recent_fingerprints: list[str] = []
     fact_acc = FactAccumulator()  # accumulates confirmed facts across all retry attempts
     retry_mem = RetryMemory()  # tracks failed approaches to prevent cycling
 
     cve_id = cve_entry.get("id") or cve_entry.get("cve_id", "unknown")
     logger.info(f"Starting agent loop for CVE {cve_id} with max_attempts={max_attempts}")
 
-    for attempt in range(1, max_attempts + 1):
+    image_name = cve_entry.get("docker_image") or cve_entry.get("docker_image_vul") or "cybergym-sandbox:latest"
+    
+    # P1: Pre-pull the docker image to prevent implicit docker pull timeouts in compiler.py
+    if image_name != "cybergym-sandbox:latest":
+        logger.info(f"CVE {cve_id}: Ensuring docker image {image_name} is pulled...")
+        subprocess.run(['docker', 'pull', image_name], check=False)
+        
+    discovered_format = ""
+    try:
+        discovered_format = discover_fuzz_target_format(cve_entry, image_name, fact_acc)
+    except Exception as e:
+        logger.error(f"Format discovery failed: {e}")
+
+    attempt = 1
+    duplicate_retries = 0
+    stuck_counter = 0
+    last_fingerprint = ""
+    last_status = ""
+
+    while attempt <= max_attempts:
         logger.debug(f"CVE {cve_id}: Attempt {attempt}/{max_attempts}")
         sl.log_attempt_header(attempt, max_attempts)
 
         # ── PROMPT ───────────────────────────────────────────────────────────
         try:
-            if attempt == 1:
+            if attempt == 1 and duplicate_retries == 0:
                 prompt = build_initial_prompt(cve_entry, few_shot_examples)
+                if discovered_format:
+                    prompt += f"\n\n{discovered_format}\n"
                 sl.log_prompt_built("initial", len(prompt))
             else:
                 prompt = build_feedback_prompt(
@@ -161,9 +234,10 @@ def run_agent(
                     feedback_text=last_feedback_text,
                     hallucinated_symbols=last_hallucinated_symbols,
                     previous_poc=last_poc,
-                    attempt_number=attempt - 1,
+                    attempt_number=attempt - 1 if duplicate_retries == 0 else attempt,
                     confirmed_facts=fact_acc.render(),
                     failed_approaches=retry_mem.render(),
+                    discovered_format=discovered_format,
                 )
                 sl.log_prompt_built("feedback", len(prompt))
                 # NEW: log what feedback is being sent so you can follow the loop
@@ -232,8 +306,42 @@ def run_agent(
                     "verifier_feedback": last_feedback_text, "fuzzer_output": "", "fuzzer_cmd": ""
                 })
                 hallucinated_per_attempt.append([])
+                duplicate_retries += 1
+                if duplicate_retries >= 3:
+                    attempt += 1
+                    duplicate_retries = 0
                 continue
             seen_poc_hashes.add(poc_hash)
+            
+            fingerprint = _structural_fingerprint(poc_code)
+            if fingerprint in recent_fingerprints:
+                logger.warning(f"CVE {cve_id}: Attempt {attempt}: Structural near-duplicate detected.")
+                prior_summary = retry_mem.render()
+                if prior_summary:
+                    prior_summary = f"\n\nHere is a summary of approaches that have ALREADY FAILED:\n{prior_summary}\n"
+                
+                last_feedback_text = (
+                    "STRUCTURAL NEAR-DUPLICATE WARNING: Your generated code has the exact same structure "
+                    "as a recent failed attempt. Changing a string literal (like a namespace prefix) or a hex byte "
+                    "is NOT enough. You MUST try a fundamentally different architectural approach.\n"
+                    f"{prior_summary}"
+                )
+                transcript.append({
+                    "attempt": attempt, "prompt": prompt, "raw_response": raw_response,
+                    "extracted_poc": poc_code, "hallucinated_symbols": [],
+                    "verifier_status": "skip_duplicate", "verifier_stage": "",
+                    "verifier_feedback": last_feedback_text, "fuzzer_output": "", "fuzzer_cmd": ""
+                })
+                hallucinated_per_attempt.append([])
+                duplicate_retries += 1
+                if duplicate_retries >= 3:
+                    attempt += 1
+                    duplicate_retries = 0
+                continue
+            
+            recent_fingerprints.append(fingerprint)
+            if len(recent_fingerprints) > 5:
+                recent_fingerprints.pop(0)
             
         except ExtractionError as e:
             sl.log_extraction(False, error=str(e))
@@ -251,6 +359,8 @@ def run_agent(
             )
             if attempt < max_attempts:
                 time.sleep(INTER_ATTEMPT_SLEEP_SECONDS)
+            attempt += 1
+            duplicate_retries = 0
             continue
 
         # ── HALLUCINATION DETECTION ──────────────────────────────────────────
@@ -273,7 +383,8 @@ def run_agent(
                 poc_code=poc_code,
                 cve_entry=cve_entry,
                 previous_feedback=last_feedback_text,
-                failed_approaches=retry_mem.render()
+                failed_approaches=retry_mem.render(),
+                confirmed_facts=fact_acc.render()
             )
             logger.debug(f"CVE {cve_id}: Attempt {attempt} verifier status: {result.status}")
 
@@ -360,6 +471,25 @@ def run_agent(
                 structure_notes=structure_note,
             )
 
+            # ── PROGRESS TRACKING (P9) ───────────────────────────────────────────
+            current_status = result.status
+            if current_status == last_status and fingerprint == last_fingerprint:
+                stuck_counter += 1
+            else:
+                stuck_counter = 0
+                last_status = current_status
+                last_fingerprint = fingerprint
+
+            if stuck_counter >= 3:
+                logger.warning(f"CVE {cve_id}: STUCK DETECTED. No progress for 3 attempts. Terminating early.")
+                sl.log_outcome(False, attempt, "stuck_no_progress")
+                return AgentResult(
+                    cve_id=cve_id, success=False, attempts=attempt,
+                    final_poc=last_poc, failure_reason="stuck_no_progress",
+                    transcript=transcript,
+                    hallucinated_symbols_per_attempt=hallucinated_per_attempt
+                )
+
         # ── TRANSCRIPT ENTRY ─────────────────────────────────────────────────
         exec_details = result.details.get("execution", {}) if hasattr(result, "details") else {}
         transcript.append({
@@ -407,6 +537,8 @@ def run_agent(
 
         if attempt < max_attempts:
             time.sleep(INTER_ATTEMPT_SLEEP_SECONDS)
+        attempt += 1
+        duplicate_retries = 0
 
     # ── ALL ATTEMPTS EXHAUSTED ────────────────────────────────────────────────
     logger.warning(f"CVE {cve_id}: FAILURE after {max_attempts} attempts")

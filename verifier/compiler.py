@@ -17,7 +17,7 @@ def _is_infrastructure_error(stderr: str) -> bool:
     ]
     return any(marker in stderr_lower for marker in infrastructure_markers)
 
-def compile_poc(poc_code: str, cve_entry: dict, timeout_sec: int = 15) -> dict:
+def compile_poc(poc_code: str, cve_entry: dict, timeout_sec: int = 30) -> dict:
     image_name = cve_entry.get("docker_image") or cve_entry.get("docker_image_vul") or "cybergym-sandbox:latest"
 
     result = {

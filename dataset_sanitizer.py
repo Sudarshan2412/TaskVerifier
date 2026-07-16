@@ -108,6 +108,14 @@ _ASAN_SUMMARY_RE = re.compile(
     re.MULTILINE,
 )
 
+# Matches libFuzzer/ASAN DEDUP_TOKEN lines which encode the crash call chain.
+# e.g.: DEDUP_TOKEN: xmlDictFindEntry--xmlDictLookupInternal--xmlDictLookup
+# These must be stripped — they directly name the crash functions.
+_DEDUP_TOKEN_RE = re.compile(
+    r'^\s*DEDUP_TOKEN\s*:.*$',
+    re.MULTILINE,
+)
+
 
 def redact_stacktrace_frames(crash_desc: str) -> str:
     """
@@ -136,6 +144,10 @@ def redact_stacktrace_frames(crash_desc: str) -> str:
         return crash_desc
     result = _ASAN_FRAME_RE.sub(r'\1 in <redacted> <redacted>', crash_desc)
     result = _ASAN_SUMMARY_RE.sub(r'\1', result)
+    # Strip DEDUP_TOKEN lines — they encode the exact crash call chain
+    result = _DEDUP_TOKEN_RE.sub('', result)
+    # Remove any blank lines created by the above removal
+    result = re.sub(r'\n{3,}', '\n\n', result)
     return result
 
 

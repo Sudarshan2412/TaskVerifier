@@ -1,0 +1,30 @@
+Running LLVMFuzzerInitialize ...
+continue...
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==8==ERROR: AddressSanitizer: SEGV on unknown address 0x0001a65fd436 (pc 0x0000005909c0 bp 0x7fffc31afb20 sp 0x7fffc31afa00 T0)
+==8==The signal is caused by a READ memory access.
+SCARINESS: 20 (wild-addr-read)
+    #0 0x5909c0 in xmlDictFindEntry /src/libxml2/dict.c:527:16
+    #1 0x5909c0 in xmlDictLookupInternal /src/libxml2/dict.c:692:20
+    #2 0x58fec5 in xmlDictLookup /src/libxml2/dict.c:795:13
+    #3 0x637f74 in xmlNewDocNode /src/libxml2/tree.c:2282:26
+    #4 0x638968 in xmlNewDocRawNode /src/libxml2/tree.c:2352:11
+    #5 0x4edd12 in exsltStrSplitFunction /src/libxslt/libexslt/strings.c:208:10
+    #6 0x7329be in xmlXPathCompOpEval /src/libxml2/xpath.c:12321:17
+    #7 0x730abe in xmlXPathCompOpEval /src/libxml2/xpath.c:12473:26
+    #8 0x71f022 in xmlXPathRunEval /src/libxml2/xpath.c:13053:2
+    #9 0x71e0e8 in xmlXPathCompiledEvalInternal /src/libxml2/xpath.c:13434:11
+    #10 0x71ddaf in xmlXPathCompiledEval /src/libxml2/xpath.c:13480:5
+    #11 0x4ddcfb in xsltFuzzXPath /src/libxslt/tests/fuzz/fuzz.c:207:16
+    #12 0x4dcfa5 in LLVMFuzzerTestOneInput /src/libxslt/tests/fuzz/xpath.c:17:34
+    #13 0x4e0c1d in ExecuteFilesOnyByOne /src/aflplusplus/utils/aflpp_driver/aflpp_driver.c:255:7
+    #14 0x4e0a28 in LLVMFuzzerRunDriver /src/aflplusplus/utils/aflpp_driver/aflpp_driver.c
+    #15 0x4e05e8 in main /src/aflplusplus/utils/aflpp_driver/aflpp_driver.c:300:10
+    #16 0x72100d3dd082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 87b331c034a6458c64ce09c03939e947212e18ce)
+    #17 0x41e6fd in _start (/out/xpath+0x41e6fd)
+
+DEDUP_TOKEN: xmlDictFindEntry--xmlDictLookupInternal--xmlDictLookup
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /src/libxml2/dict.c:527:16 in xmlDictFindEntry
+==8==ABORTING
