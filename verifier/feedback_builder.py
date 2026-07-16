@@ -426,6 +426,14 @@ def build_feedback(
         fuzzer_output = execution_result.get('stderr', '').strip()
         if not fuzzer_output:
             fuzzer_output = execution_result.get('stdout', '').strip()
+        payload_diagnostics = execution_result.get("payload_diagnostics") or []
+        payload_diag_text = ""
+        if payload_diagnostics:
+            payload_diag_text = (
+                "Generated payload byte diagnostics:\n"
+                + "\n".join(f"- {note}" for note in payload_diagnostics)
+                + "\n\n"
+            )
 
         # Add explicit interpretation of the silence so the agent and critic
         # understand that "no output" means "parser rejected before vulnerable code."
@@ -475,6 +483,7 @@ def build_feedback(
             f"CRITICAL: The generator program MUST write its output to exactly '/tmp/poc' (no extension).\n\n"
             f"Target Source Code:\n{target_source}\n\n"
             f"Agent's Generator Code:\n```c\n{poc_code}\n```\n\n"
+            f"{payload_diag_text}"
             f"Target Binary Output:\n{fuzzer_output[-5000:]}\n\n"
             f"Use your SEARCH and READ tools to investigate."
         )
@@ -582,6 +591,9 @@ def build_feedback(
                 )
                 analysis = warning + analysis
 
-        return f"The PoC executed but did not trigger the vulnerability.\nSenior Engineer Analysis:\n{analysis}"
+        prefix = ""
+        if payload_diag_text:
+            prefix = payload_diag_text
+        return f"The PoC executed but did not trigger the vulnerability.\n{prefix}Senior Engineer Analysis:\n{analysis}"
 
     return "Please fix the PoC and try again."

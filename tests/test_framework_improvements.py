@@ -17,7 +17,9 @@ from agent.format_hints import get_format_hint, FORMAT_HINTS, FormatHintEntry
 from agent.fact_accumulator import FactAccumulator
 from agent.prompt_builder import build_feedback_prompt
 from agent.retry_memory import RetryMemory
+from agent.agent_loop import _payload_literal_fingerprint, _structural_fingerprint
 from dataset_sanitizer import sanitize_entry, validate_crash_description
+from verifier.execution import _payload_diagnostics
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -138,6 +140,34 @@ class TestFormatHintRegistry:
             assert hint == "Novel fuzzer guidance for test."
         finally:
             FORMAT_HINTS.remove(new_entry)
+
+
+class TestPayloadGuardrails:
+
+    def test_payload_diagnostics_flags_doubled_percent_before_metachar(self, tmp_path):
+        poc = tmp_path / "poc"
+        poc.write_bytes(b"viewbox 0 0 1 1\ntext 0 0 '%%[AAAA]'\n")
+
+        notes = _payload_diagnostics(poc, 'fwrite("%%[", 1, 3, f);')
+
+        assert notes
+        assert "doubled percent" in notes[0]
+        assert "fwrite/fputs do not collapse" in notes[0]
+
+    def test_payload_diagnostics_flags_truncated_fwrite_literal(self, tmp_path):
+        poc = tmp_path / "poc"
+        poc.write_bytes(b"text 0 0 '%%")
+
+        notes = _payload_diagnostics(poc, 'fwrite("text 0 0 \'%%[", 1, 12, f);')
+
+        assert any("fwrite is truncating" in note for note in notes)
+
+    def test_payload_literal_fingerprint_distinguishes_escaped_percent_fix(self):
+        bad = 'int main(void) { fwrite("text 0 0 \'%%[", 1, 12, f); }'
+        good = 'int main(void) { fwrite("text 0 0 \'%[", 1, 11, f); }'
+
+        assert _structural_fingerprint(bad) == _structural_fingerprint(good)
+        assert _payload_literal_fingerprint(bad) != _payload_literal_fingerprint(good)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

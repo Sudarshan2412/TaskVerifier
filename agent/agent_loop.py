@@ -157,6 +157,22 @@ def _structural_fingerprint(poc_code: str) -> str:
     return hashlib.md5(code.encode()).hexdigest()
 
 
+def _payload_literal_fingerprint(poc_code: str) -> str:
+    """
+    Fingerprint payload-shaping literals separately from control structure.
+
+    The structural fingerprint intentionally erases string/char literals, but
+    for generator PoCs a one-byte literal change can be the whole fix.  Keep
+    near-duplicate detection from suppressing attempts that actually write
+    different bytes to /tmp/poc.
+    """
+    strings = re.findall(r'"(?:\\.|[^"\\])*"', poc_code)
+    chars = re.findall(r"'(?:\\.|[^'\\])*'", poc_code)
+    loop_bounds = re.findall(r'for\s*\([^;]*;[^;<>]*(?:<|<=)\s*([^;]+);', poc_code)
+    signature = "\n".join(strings + chars + loop_bounds)
+    return hashlib.md5(signature.encode()).hexdigest()
+
+
 def run_agent(
     cve_entry: dict,
     max_attempts: int = 5,
@@ -208,6 +224,7 @@ def run_agent(
     last_hallucinated_symbols = []
     seen_poc_hashes: set[str] = set()
     recent_fingerprints: list[str] = []
+    recent_payload_signatures: set[tuple[str, str]] = set()
     fact_acc = FactAccumulator()  # accumulates confirmed facts across all retry attempts
     retry_mem = RetryMemory()  # tracks failed approaches to prevent cycling
 
@@ -332,7 +349,9 @@ def run_agent(
             seen_poc_hashes.add(poc_hash)
             
             fingerprint = _structural_fingerprint(poc_code)
-            if fingerprint in recent_fingerprints:
+            payload_fingerprint = _payload_literal_fingerprint(poc_code)
+            duplicate_payload_shape = (fingerprint, payload_fingerprint) in recent_payload_signatures
+            if fingerprint in recent_fingerprints and duplicate_payload_shape:
                 logger.warning(f"CVE {cve_id}: Attempt {attempt}: Structural near-duplicate detected.")
                 prior_summary = retry_mem.render()
                 if prior_summary:
@@ -358,6 +377,7 @@ def run_agent(
                 continue
             
             recent_fingerprints.append(fingerprint)
+            recent_payload_signatures.add((fingerprint, payload_fingerprint))
             if len(recent_fingerprints) > 5:
                 recent_fingerprints.pop(0)
             

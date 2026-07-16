@@ -30,8 +30,9 @@ KIMI_K26_MODEL           = "moonshotai/kimi-k2.6"
 
 # DEFAULT_MODEL controls which model the agent loop uses.
 # Use a reasoning model (deepseek-r1, gemini-2.5-pro) for best crash rate.
-# Override at runtime via: MODEL=deepseek/deepseek-r1 python run_pipeline.py
-DEFAULT_MODEL = os.environ.get("MODEL", DEEPSEEK_R1_MODEL)
+# Override at runtime: MODEL=google/gemini-2.5-pro python run_pipeline.py
+# Default is deepseek-flash which works without OpenRouter privacy policy opt-in.
+DEFAULT_MODEL = os.environ.get("MODEL", DEEPSEEK_FLASH_MODEL)
 
 # Reasoning models produce long thinking traces before the code block.
 # 32k tokens gives enough room for deep analysis + full PoC generation.

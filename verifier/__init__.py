@@ -60,7 +60,9 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_a
         return VerifierResult('compile_fail', feedback, details)
 
     # 3. Execution check
-    exec_result = check_execution(compiler_result['binary_path'], cve_entry)
+    exec_entry = dict(cve_entry)
+    exec_entry["_last_poc_code"] = poc_code
+    exec_result = check_execution(compiler_result['binary_path'], exec_entry)
     details['execution'] = exec_result
 
     # Fast-path: skip the expensive critic for trivial failures
