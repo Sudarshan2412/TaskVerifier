@@ -1,0 +1,110 @@
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 3346665312
+INFO: Loaded 1 modules   (22082 inline 8-bit counters): 22082 [0x8bfcd8, 0x8c531a), 
+INFO: Loaded 1 PC tables (22082 PCs): 22082 [0x7f8270,0x84e690), 
+/out/ftfuzzer: Running 1 inputs 1 time(s) each.
+Running: /tmp/poc
+=================================================================
+==7==ERROR: AddressSanitizer: heap-use-after-free on address 0x6070000002c0 at pc 0x000000541fc6 bp 0x7ffe2f05c7e0 sp 0x7ffe2f05c7d8
+READ of size 1 at 0x6070000002c0 thread T0
+SCARINESS: 40 (1-byte-read-heap-use-after-free)
+    #0 0x541fc5 in cff_parse_num /src/freetype2/src/cff/cffparse.c:440:10
+    #1 0x5414da in cff_parser_run /src/freetype2/src/cff/cffparse.c:1543:26
+    #2 0x5403f5 in cff_load_private_dict /src/freetype2/src/cff/cffload.c:1879:13
+    #3 0x557515 in cff_subfont_load /src/freetype2/src/cff/cffload.c:2007:13
+    #4 0x51c898 in cff_font_load /src/freetype2/src/cff/cffload.c:2268:17
+    #5 0x51c898 in cff_face_init /src/freetype2/src/cff/cffobjs.c:593:15
+    #6 0x56c0de in open_face /src/freetype2/src/base/ftobjs.c:1180:15
+    #7 0x5695cd in FT_Open_Face /src/freetype2/src/base/ftobjs.c:2195:19
+    #8 0x56bb84 in FT_New_Memory_Face /src/freetype2/src/base/ftobjs.c:1270:12
+    #9 0x4dec7a in LLVMFuzzerTestOneInput /src/freetype2/./src/tools/ftfuzzer/ftfuzzer.cc:225:14
+    #10 0x6defa3 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerLoop.cpp:611:15
+    #11 0x6ca702 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:324:6
+    #12 0x6cffac in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:860:9
+    #13 0x6f94e2 in main /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerMain.cpp:20:10
+    #14 0x7fb8c071d082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 87b331c034a6458c64ce09c03939e947212e18ce)
+    #15 0x41f91d in _start (/out/ftfuzzer+0x41f91d)
+
+DEDUP_TOKEN: cff_parse_num--cff_parser_run--cff_load_private_dict
+0x6070000002c0 is located 0 bytes inside of 70-byte region [0x6070000002c0,0x607000000306)
+freed by thread T0 here:
+    #0 0x4a115c in __interceptor_realloc /src/llvm-project/compiler-rt/lib/asan/asan_malloc_linux.cpp:85:3
+    #1 0x5cc715 in ft_realloc /src/freetype2/builds/unix/ftsystem.c:135:12
+    #2 0x561944 in ft_mem_qrealloc /src/freetype2/src/base/ftutil.c:155:16
+    #3 0x561944 in ft_mem_realloc /src/freetype2/src/base/ftutil.c:102:13
+    #4 0x543c7d in cff_blend_doBlend /src/freetype2/src/cff/cffload.c:1306:12
+    #5 0x543c7d in cff_parse_blend /src/freetype2/src/cff/cffparse.c:913:13
+    #6 0x541951 in cff_parser_run /src/freetype2/src/cff/cffparse.c:1573:23
+    #7 0x5403f5 in cff_load_private_dict /src/freetype2/src/cff/cffload.c:1879:13
+    #8 0x557515 in cff_subfont_load /src/freetype2/src/cff/cffload.c:2007:13
+    #9 0x51c898 in cff_font_load /src/freetype2/src/cff/cffload.c:2268:17
+    #10 0x51c898 in cff_face_init /src/freetype2/src/cff/cffobjs.c:593:15
+    #11 0x56c0de in open_face /src/freetype2/src/base/ftobjs.c:1180:15
+    #12 0x5695cd in FT_Open_Face /src/freetype2/src/base/ftobjs.c:2195:19
+    #13 0x56bb84 in FT_New_Memory_Face /src/freetype2/src/base/ftobjs.c:1270:12
+    #14 0x4dec7a in LLVMFuzzerTestOneInput /src/freetype2/./src/tools/ftfuzzer/ftfuzzer.cc:225:14
+    #15 0x6defa3 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerLoop.cpp:611:15
+    #16 0x6ca702 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:324:6
+    #17 0x6cffac in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:860:9
+    #18 0x6f94e2 in main /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerMain.cpp:20:10
+    #19 0x7fb8c071d082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 87b331c034a6458c64ce09c03939e947212e18ce)
+
+DEDUP_TOKEN: __interceptor_realloc--ft_realloc--ft_mem_qrealloc
+previously allocated by thread T0 here:
+    #0 0x4a0d56 in __interceptor_malloc /src/llvm-project/compiler-rt/lib/asan/asan_malloc_linux.cpp:69:3
+    #1 0x5cc572 in ft_alloc /src/freetype2/builds/unix/ftsystem.c:102:12
+    #2 0x5619aa in ft_mem_qalloc /src/freetype2/src/base/ftutil.c:76:15
+    #3 0x5619aa in ft_mem_alloc /src/freetype2/src/base/ftutil.c:55:25
+    #4 0x5619aa in ft_mem_qrealloc /src/freetype2/src/base/ftutil.c:146:15
+    #5 0x5619aa in ft_mem_realloc /src/freetype2/src/base/ftutil.c:102:13
+    #6 0x543c7d in cff_blend_doBlend /src/freetype2/src/cff/cffload.c:1306:12
+    #7 0x543c7d in cff_parse_blend /src/freetype2/src/cff/cffparse.c:913:13
+    #8 0x541951 in cff_parser_run /src/freetype2/src/cff/cffparse.c:1573:23
+    #9 0x5403f5 in cff_load_private_dict /src/freetype2/src/cff/cffload.c:1879:13
+    #10 0x557515 in cff_subfont_load /src/freetype2/src/cff/cffload.c:2007:13
+    #11 0x51c898 in cff_font_load /src/freetype2/src/cff/cffload.c:2268:17
+    #12 0x51c898 in cff_face_init /src/freetype2/src/cff/cffobjs.c:593:15
+    #13 0x56c0de in open_face /src/freetype2/src/base/ftobjs.c:1180:15
+    #14 0x5695cd in FT_Open_Face /src/freetype2/src/base/ftobjs.c:2195:19
+    #15 0x56bb84 in FT_New_Memory_Face /src/freetype2/src/base/ftobjs.c:1270:12
+    #16 0x4dec7a in LLVMFuzzerTestOneInput /src/freetype2/./src/tools/ftfuzzer/ftfuzzer.cc:225:14
+    #17 0x6defa3 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerLoop.cpp:611:15
+    #18 0x6ca702 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:324:6
+    #19 0x6cffac in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:860:9
+    #20 0x6f94e2 in main /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerMain.cpp:20:10
+    #21 0x7fb8c071d082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 87b331c034a6458c64ce09c03939e947212e18ce)
+
+DEDUP_TOKEN: __interceptor_malloc--ft_alloc--ft_mem_qalloc
+SUMMARY: AddressSanitizer: heap-use-after-free /src/freetype2/src/cff/cffparse.c:440:10 in cff_parse_num
+Shadow bytes around the buggy address:
+  0x0c0e7fff8000: fa fa fa fa 00 00 00 00 00 00 00 00 00 fa fa fa
+  0x0c0e7fff8010: fa fa fd fd fd fd fd fd fd fd fd fd fa fa fa fa
+  0x0c0e7fff8020: fd fd fd fd fd fd fd fd fd fd fa fa fa fa 00 00
+  0x0c0e7fff8030: 00 00 00 00 00 00 00 00 fa fa fa fa 00 00 00 00
+  0x0c0e7fff8040: 00 00 00 00 00 00 fa fa fa fa 00 00 00 00 00 00
+=>0x0c0e7fff8050: 00 00 00 00 fa fa fa fa[fd]fd fd fd fd fd fd fd
+  0x0c0e7fff8060: fd fa fa fa fa fa 00 00 00 00 00 00 00 00 00 00
+  0x0c0e7fff8070: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c0e7fff8080: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c0e7fff8090: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c0e7fff80a0: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==7==ABORTING

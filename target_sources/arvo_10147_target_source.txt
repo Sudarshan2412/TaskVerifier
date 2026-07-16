@@ -1,0 +1,258 @@
+static MagickPassFail IsDCM(const unsigned char *magick,const size_t length)
+{
+  if (length < 132)
+    return(False);
+  if (LocaleNCompare((char *) (magick+128),"DICM",4) == 0)
+    return(True);
+  return(False);
+}
+
+static MagickPassFail DCM_InitDCM(DicomStream *dcm,int verbose)
+{
+  (void) memset(dcm,0,sizeof(*dcm));
+  dcm->columns=0;
+  dcm->rows=0;
+  dcm->samples_per_pixel=1;
+  dcm->bits_allocated=8;
+  dcm->significant_bits=0;
+  dcm->high_bit=0;
+  dcm->bytes_per_pixel=1;
+  dcm->max_value_in=255;
+  dcm->max_value_out=255;
+  dcm->pixel_representation=0;
+  dcm->transfer_syntax=DCM_TS_IMPL_LITTLE;
+  dcm->interlace=0;
+  dcm->msb_state=DCM_MSB_LITTLE;
+  dcm->phot_interp=DCM_PI_MONOCHROME2;
+  dcm->window_center=0;
+  dcm->window_width=0;
+  dcm->rescale_intercept=0;
+  dcm->rescale_slope=1;
+  dcm->number_scenes=1;
+  dcm->data=NULL;
+  dcm->upper_lim=0;
+  dcm->lower_lim=0;
+  dcm->rescale_map=NULL;
+  dcm->rescale_type=DCM_RT_HOUNSFIELD;
+  dcm->rescaling=DCM_RS_NONE;
+  dcm->offset_ct=0;
+  dcm->offset_arr=NULL;
+  dcm->frag_bytes=0;
+  dcm->rle_rep_ct=0;
+#if defined(USE_GRAYMAP)
+  dcm->graymap=(unsigned short *) NULL;
+#endif
+  dcm->funcReadShort=ReadBlobLSBShort;
+  dcm->funcReadLong=ReadBlobLSBLong;
+  dcm->explicit_file=False;
+  dcm->verbose=verbose;
+
+  return MagickPass;
+}
+
+static void DCM_DestroyDCM(DicomStream *dcm)
+{
+  MagickFreeMemory(dcm->offset_arr);
+  MagickFreeMemory(dcm->data);
+#if defined(USE_GRAYMAP)
+  MagickFreeMemory(dcm->graymap);
+#endif
+  MagickFreeMemory(dcm->rescale_map);
+}
+
+/*
+  Parse functions for DICOM elements
+*/
+static MagickPassFail funcDCM_TransferSyntax(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  char
+    *p;
+
+  int
+    type,
+    subtype;
+
+  if (dcm->data == (unsigned char *) NULL)
+    {
+      ThrowException(exception,CorruptImageError,ImproperImageHeader,image->filename);
+      return MagickFail;
+    }
+
+  p=(char *) dcm->data;
+  if (strncmp(p,"1.2.840.10008.1.2",17) == 0)
+    {
+      if (*(p+17) == 0)
+        {
+          dcm->transfer_syntax = DCM_TS_IMPL_LITTLE;
+          return MagickPass;
+        }
+      type=0;
+      subtype=0;
+      /* Subtype is not always provided, but insist on type */
+      if (sscanf(p+17,".%d.%d",&type,&subtype) < 1)
+        {
+          ThrowException(exception,CorruptImageError,ImproperImageHeader,image->filename);
+          return MagickFail;
+        }
+      switch (type)
+        {
+        case 1:
+          dcm->transfer_syntax = DCM_TS_EXPL_LITTLE;
+          break;
+        case 2:
+          dcm->transfer_syntax = DCM_TS_EXPL_BIG;
+          dcm->msb_state=DCM_MSB_BIG_PENDING;
+          break;
+        case 4:
+          if ((subtype >= 80) && (subtype <= 81))
+            dcm->transfer_syntax = DCM_TS_JPEG_LS;
+          else
+          if ((subtype >= 90) && (subtype <= 93))
+            dcm->transfer_syntax = DCM_TS_JPEG_2000;
+          else
+            dcm->transfer_syntax = DCM_TS_JPEG;
+          break;
+        case 5:
+          dcm->transfer_syntax = DCM_TS_RLE;
+          break;
+        }
+    }
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_StudyDate(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  ARG_NOT_USED(exception);
+
+  (void) SetImageAttribute(image,"StudyDate",(char *) dcm->data);
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_PatientName(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  ARG_NOT_USED(exception);
+
+  (void) SetImageAttribute(image,"PatientName",(char *) dcm->data);
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_TriggerTime(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  ARG_NOT_USED(exception);
+
+  (void) SetImageAttribute(image,"TriggerTime",(char *) dcm->data);
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_FieldOfView(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  ARG_NOT_USED(exception);
+
+  (void) SetImageAttribute(image,"FieldOfView",(char *) dcm->data);
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_SeriesNumber(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  ARG_NOT_USED(exception);
+  (void) SetImageAttribute(image,"SeriesNumber",(char *) dcm->data);
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_ImagePosition(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  ARG_NOT_USED(exception);
+  (void) SetImageAttribute(image,"ImagePosition",(char *) dcm->data);
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_ImageOrientation(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  ARG_NOT_USED(exception);
+  (void) SetImageAttribute(image,"ImageOrientation",(char *) dcm->data);
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_SliceLocation(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  ARG_NOT_USED(exception);
+  (void) SetImageAttribute(image,"SliceLocation",(char *) dcm->data);
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_SamplesPerPixel(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  ARG_NOT_USED(image);
+  ARG_NOT_USED(exception);
+  dcm->samples_per_pixel=dcm->datum;
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_PhotometricInterpretation(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  char photometric[MaxTextExtent];
+  int i;
+
+  ARG_NOT_USED(image);
+  ARG_NOT_USED(exception);
+
+  if (dcm->data == (unsigned char *) NULL)
+    {
+      ThrowException(exception,CorruptImageError,ImproperImageHeader,image->filename);
+      return MagickFail;
+    }
+
+  for (i=0; i < (long) Min(dcm->length, MaxTextExtent-1); i++)
+    photometric[i]=dcm->data[i];
+  photometric[i]='\0';
+
+  if (strncmp(photometric,"MONOCHROME1",11) == 0)
+    dcm->phot_interp = DCM_PI_MONOCHROME1;
+  else
+    if (strncmp(photometric,"MONOCHROME2",11) == 0)
+      dcm->phot_interp = DCM_PI_MONOCHROME2;
+    else
+      if (strncmp(photometric,"PALETTE COLOR",13) == 0)
+        dcm->phot_interp = DCM_PI_PALETTE_COLOR;
+      else
+        if (strncmp(photometric,"RGB",3) == 0)
+          dcm->phot_interp = DCM_PI_RGB;
+        else
+          dcm->phot_interp = DCM_PI_OTHER;
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_PlanarConfiguration(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  ARG_NOT_USED(image);
+  ARG_NOT_USED(exception);
+
+  dcm->interlace=dcm->datum;
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_NumberOfFrames(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  if (dcm->data == (unsigned char *) NULL)
+    {
+      ThrowException(exception,CorruptImageError,ImproperImageHeader,image->filename);
+      return MagickFail;
+    }
+
+  dcm->number_scenes=MagickAtoI((char *) dcm->data);
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_Rows(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  ARG_NOT_USED(image);
+  ARG_NOT_USED(exception);
+
+  dcm->rows=dcm->datum;
+  return MagickPass;
+}
+
+static MagickPassFail funcDCM_Columns(Image *image,DicomStream *dcm,ExceptionInfo *exception)
+{
+  ARG_NOT_USED(image);
+  ARG_NOT_USED(exception);

@@ -1,0 +1,91 @@
+  {
+    case PointPrimitive:
+    case ColorPrimitive:
+    case MattePrimitive:
+    case TextPrimitive:
+    case ImagePrimitive:
+      return((PathInfo *) NULL);
+    default:
+      break;
+  }
+  for (i=0; primitive_info[i].primitive != UndefinedPrimitive; i++);
+  path_info=MagickAllocateArray(PathInfo *,(2*i+3),sizeof(PathInfo));
+  if (path_info == (PathInfo *) NULL)
+    return((PathInfo *) NULL);
+  coordinates=0;
+  n=0;
+  p.x=(-1.0);
+  p.y=(-1.0);
+  q.x=(-1.0);
+  q.y=(-1.0);
+  start=0;
+  for (i=0; primitive_info[i].primitive != UndefinedPrimitive; i++)
+  {
+    code=LineToCode;
+    if (coordinates <= 0)
+      {
+        /* start of a new subpath */
+        coordinates=(long) primitive_info[i].coordinates;
+        p=primitive_info[i].point;  /* first point in subpath */
+        start=n;  /* index to start of subpath in path_info */
+        code=MoveToCode;
+        IsClosedSubPath=PRIMINF_GET_IS_CLOSED_SUBPATH(&primitive_info[i]);
+      }
+    coordinates--;
+    /*
+      Do not put the current point into path_info if it is a duplicate of
+      (i.e. "too close" to) the previous point.  However, the current point
+      is always put into path_info when it is the first (code==MoveToCode)
+      or last point in a subpath.  Note that for the first point the "previous
+      point" (q) is not valid (usually a leftover from the previous subpath),
+      so the first point test should be done first.  W.r.t. the last point,
+      sometimes eliminating the last point as a "duplicate" will result in a
+      polygon (path) not being completely closed, causing small "nubs" to
+      protrude from the filled shape at that point.
+    */
+    if ((code == MoveToCode) || (coordinates <= 0) ||
+        (fabs(q.x-primitive_info[i].point.x) > MagickEpsilon) ||
+        (fabs(q.y-primitive_info[i].point.y) > MagickEpsilon))
+      {
+        /* put current point into path_info*/
+        path_info[n].code=code;
+        path_info[n].point=primitive_info[i].point;
+        q=primitive_info[i].point;  /* will be "previous point" for next iteration */
+        n++;
+      }
+    if (coordinates > 0)
+      continue;   /* go process next point in current subpath */
+    /*
+      The current point is the last point in the subpath.  If it closes
+      the subpath, go on to the next subpath.
+    */
+    if  ( IsClosedSubPath )
+      {
+        IsClosedSubPath = MagickFalse;
+        continue;
+      }
+    /*
+      The just completed subpath is not closed.  Mark it as "open" and add two
+      more points (repeat of current point + subpath start point) to "virtually"
+      close it (this is a "ghost line").
+    */
+    path_info[start].code=OpenCode;
+    path_info[n].code=GhostlineCode;
+    path_info[n].point=primitive_info[i].point;
+    n++;
+    path_info[n].code=LineToCode;
+    path_info[n].point=p;
+    n++;
+  }
+  path_info[n].code=EndCode;
+  path_info[n].point.x=0.0;
+  path_info[n].point.y=0.0;
+  if (IsEventLogging())
+    LogPathInfo(path_info);
+  return(path_info);
+}
+
+/*
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%                                                                             %
+%                                                                             %

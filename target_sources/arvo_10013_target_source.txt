@@ -1,0 +1,132 @@
+  pixel area.
+*/
+static void
+DisassociateAlphaRegion(Image *image)
+{
+  register PixelPacket
+    *q;
+
+  register long
+    x;
+
+  register double
+    alpha,
+    value;
+
+  long
+    number_pixels;
+
+  number_pixels=(long) GetPixelCacheArea(image);
+  q=AccessMutablePixels(image);
+
+  for (x = number_pixels; x > 0; --x)
+    {
+      if (q->opacity != (Quantum) MaxRGB)
+        {
+          alpha=((double) MaxRGB-q->opacity)/MaxRGB;
+          value=(double) q->red/alpha;
+          q->red=RoundDoubleToQuantum(value);
+          value=(double) q->green/alpha;
+          q->green=RoundDoubleToQuantum(value);
+          value=(double) q->blue/alpha;
+          q->blue=RoundDoubleToQuantum(value);
+        }
+      q++;
+    }
+}
+
+#if defined(__cplusplus) || defined(c_plusplus)
+}
+#endif
+
+/*
+  Copy a possibly unterminated sized string to an image attribute.
+*/
+#define CopySizedFieldToAttribute(key,count,text)                     \
+  do                                                                  \
+    {                                                                 \
+      char _attribute[MaxTextExtent];                                 \
+      (void) memcpy(_attribute,text,Min(sizeof(_attribute),count));   \
+      _attribute[Min(sizeof(_attribute)-1,count)]='\0';                \
+      (void) SetImageAttribute(image,key,_attribute);                 \
+                    == MagickFail)
+                  {
+                    CopyException(exception,&image->exception);
+                    status=MagickFail;
+                    break;
+                  }
+                for (y=0; y < image->rows; y++)
+                  {
+                    /*
+                      Access Magick pixels.
+                    */
+                    if (sample == 0)
+                      q=SetImagePixels(image,0,y,image->columns,1);
+                    else
+                      q=GetImagePixels(image,0,y,image->columns,1);
+                    if (q == (PixelPacket *) NULL)
+                      {
+                        CopyException(exception,&image->exception);
+                        status=MagickFail;
+                        break;
+                      }
+                    if (rows_remaining == 0)
+                      {
+                        /*
+                          Obtain a strip
+                        */
+                        if (((strip_size=TIFFReadEncodedStrip(tiff,strip_id,strip,
+                                                              strip_size_max)) == -1))
+                          {
+                            status=MagickFail;
+                            break;
+                          }
+#if !defined(WORDS_BIGENDIAN)
+                        if (24 == bits_per_sample)
+                          SwabDataToBigEndian(bits_per_sample,strip,strip_size);
+#endif
+                        rows_remaining=rows_per_strip;
+                        if (y+rows_per_strip > image->rows)
+                          rows_remaining=(rows_per_strip-(y+rows_per_strip-image->rows));
+                        p=strip;
+                        strip_id++;
+                      }
+                    /*
+                      Compact strip row to only contain raster data.
+                    */
+                    if ((samples_per_pixel > quantum_samples) &&
+                        (planar_config == PLANARCONFIG_CONTIG))
+                      CompactSamples(image->columns, bits_per_sample,
+                                     samples_per_pixel, quantum_samples, p);
+                    /*
+                      Import strip row into image.
+                    */
+                    if (ImportImagePixelArea(image,quantum_type,bits_per_sample,p,
+                                             &import_options,0) == MagickFail)
+                      {
+                        CopyException(exception,&image->exception);
+                        status=MagickFail;
+                        break;
+                      }
+                    /*
+                      Disassociate alpha from pixels if necessary.
+                    */
+                    if ((image->matte) && (alpha_type == AssociatedAlpha)
+                        && (sample == (max_sample-1)))
+                      DisassociateAlphaRegion(image);
+                    /*
+                      Save our updates.
+                    */
+                    if (!SyncImagePixels(image))
+                      {
+                        CopyException(exception,&image->exception);
+                        status=MagickFail;
+                        break;
+                      }
+                    /*
+                      Advance to next row
+                    */
+                    p += stride;
+                    rows_remaining--;
+
+                    if (image->previous == (Image *) NULL)

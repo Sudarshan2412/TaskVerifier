@@ -1,0 +1,461 @@
+%    o translate: text translation callback function
+%
+*/
+MagickExport char *TranslateTextEx(const ImageInfo *image_info,
+                                   Image *image,
+                                   const char *formatted_text,
+                                   MagickTextTranslate translate)
+{
+  char
+    buffer[MaxTextExtent],
+    *text,
+    *translated_text;
+
+  const ImageAttribute
+    *attribute;
+
+  register char
+    *p,
+    *q;
+
+  register long
+    i;
+
+  size_t
+    length,
+    offset;
+
+  assert(image != (Image *) NULL);
+  if ((formatted_text == (const char *) NULL) || (*formatted_text == '\0'))
+    return((char *) NULL);
+  text=(char *) formatted_text;
+  /*
+    If text starts with '@' then try to replace it with the content of
+    the file name which follows.
+  */
+  if ((*text == '@') && IsAccessible(text+1))
+    {
+      text=(char *) FileToBlob(text+1,&length,&image->exception);
+      if (text == (char *) NULL)
+        return((char *) NULL);
+    }
+  /*
+    Translate any embedded format characters.
+  */
+  length=strlen(text)+MaxTextExtent;
+  translated_text=MagickAllocateMemory(char *,length);
+  if (translated_text == (char *) NULL)
+    return NULL;
+  /*
+    FIXME: Overlapping memory detected here where memory should not be overlapping.
+  */
+  (void) strlcpy(translated_text,text,length);
+  /* (void) memmove(translated_text,text,strlen(text)+1); */
+  p=text;
+  for (q=translated_text; *p != '\0'; p++)
+  {
+    *q='\0';
+    if ((size_t) (q-translated_text+MaxTextExtent) >= length)
+      {
+        length<<=1;
+        MagickReallocMemory(char *,translated_text,length);
+        if (translated_text == (char *) NULL)
+          break;
+        q=translated_text+strlen(translated_text);
+      }
+    /*
+      Process formatting characters in text.
+    */
+    if ((*p == '\\') && (*(p+1) == 'r'))
+      {
+        *q++='\r';
+        p++;
+        continue;
+      }
+    if ((*p == '\\') && (*(p+1) == 'n'))
+      {
+        *q++='\n';
+        p++;
+        continue;
+      }
+    if (*p != '%')
+      {
+        *q++=(*p);
+        continue;
+      }
+    p++;
+    switch (*p)
+    {
+      case 'b':
+      {
+        /* File size */
+        FormatSize(GetBlobSize(image),buffer);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'c':
+      {
+        /* Comment */
+        attribute=GetImageAttribute(image,"comment");
+        if (attribute != (ImageAttribute *) NULL)
+          {
+            /* Comments may be larger than MaxTextExtent so make sure
+               there is sufficient memory allocated. Make sure that
+               there is at least MaxTextExtent left available after we
+               have concatenated our part. */
+            offset=q-translated_text;
+            if ((size_t) (offset+attribute->length+1+MaxTextExtent) >= length)
+              {
+                length += (attribute->length+1+2*MaxTextExtent);
+                MagickReallocMemory(char *,translated_text,length);
+                if (translated_text == (char *) NULL)
+                  break;
+                q=translated_text+offset;
+              }
+            q+=(translate)(q,attribute->value,attribute->length+1+MaxTextExtent);
+          }
+        break;
+      }
+      case 'd':
+      case 'e':
+      case 'f':
+      case 't':
+      {
+        /*
+          Label segment is the base of the filename.
+        */
+        if (strlen(image->magick_filename) != 0)
+          {
+            (void) strlcpy(buffer,"",MaxTextExtent);
+            switch (*p)
+              {
+              case 'd':
+                {
+                  /* Directory */
+                  GetPathComponent(image->magick_filename,HeadPath,buffer);
+                  break;
+                }
+              case 'e':
+                {
+                  /* Filename extension */
+                  GetPathComponent(image->magick_filename,ExtensionPath,buffer);
+                  break;
+                }
+              case 'f':
+                {
+                  /* Filename */
+                  GetPathComponent(image->magick_filename,TailPath,buffer);
+                  break;
+                }
+              case 't':
+                {
+                  /* Top of filename */
+                  GetPathComponent(image->magick_filename,BasePath,buffer);
+                  break;
+                }
+              }
+            q+=(translate)(q,buffer,MaxTextExtent);
+          }
+        break;
+      }
+      case 'g':
+      {
+        /* page dimensions and offsets */
+        FormatString(buffer,"%lux%lu%+ld%+ld",
+                     image->page.width,image->page.height,
+                     image->page.x,image->page.y);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'h':
+      {
+        /* Image height */
+        FormatString(buffer,"%lu",image->rows);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'i':
+      {
+        /* Input filename */
+        q+=(translate)(q,image->filename,MaxTextExtent);
+        break;
+      }
+      case 'k':
+      {
+        /* Number of unique colors */
+        if (GetPixelCachePresent(image))
+          {
+            FormatString(buffer,"%lu",GetNumberColors(image,(FILE *) NULL,
+                                                      &image->exception));
+            q+=(translate)(q,buffer,MaxTextExtent);
+          }
+        else
+          {
+            *q++='%';
+            *q++=(*p);
+          }
+        break;
+      }
+      case 'l':
+      {
+        /* Label */
+        attribute=GetImageAttribute(image,"label");
+        if (attribute != (ImageAttribute *) NULL)
+          q+=(translate)(q,attribute->value,MaxTextExtent);
+        break;
+      }
+      case 'm':
+      {
+        /* File format "magick" */
+        q+=(translate)(q,image->magick,MaxTextExtent);
+        break;
+      }
+      case 'n':
+      {
+        /* Number of scenes */
+        FormatString(buffer,"%lu",(unsigned long) GetImageListLength(image));
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'o':
+      {
+        /* Output filename */
+        if (image_info != (const ImageInfo *) NULL)
+          q+=(translate)(q,image_info->filename,MaxTextExtent);
+        break;
+      }
+      case 'p':
+      {
+        /* Page number */
+        register const Image
+          *frame;
+
+        unsigned long
+          page;
+
+        frame=image;
+        for (page=1; frame->previous != (Image *) NULL; page++)
+          frame=frame->previous;
+        FormatString(buffer,"%lu",page);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'q':
+      {
+        /* Quantum depth */
+        if (GetPixelCachePresent(image))
+          FormatString(buffer,"%lu",GetImageDepth(image,&image->exception));
+        else
+          FormatString(buffer,"%u",image->depth);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'r':
+      {
+        /* Image type */
+        q+=(translate)(q,ImageTypeToString(GetImageType(image,&image->exception)),
+                       MaxTextExtent);
+        break;
+      }
+      case 's':
+      {
+        /* Scene number */
+        FormatString(buffer,"%lu",image->scene);
+        if (image_info != (const ImageInfo *) NULL)
+          if (image_info->subrange != 0)
+            FormatString(buffer,"%lu",image_info->subimage);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'u':
+      {
+        /* Unique temporary filename */
+        if (image_info != (const ImageInfo *) NULL)
+          {
+            if (strlcpy(buffer,image_info->unique,MaxTextExtent) == 0)
+              if (!AcquireTemporaryFileName(buffer))
+                break;
+            q+=(translate)(q,buffer,MaxTextExtent);
+          }
+        break;
+      }
+      case 'w':
+      {
+        /* Image width */
+        FormatString(buffer,"%lu",image->columns);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'x':
+      {
+        /* Horizontal resolution */
+        FormatString(buffer,"%g",image->x_resolution);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'y':
+      {
+        /* Vertical resolution */
+        FormatString(buffer,"%g",image->y_resolution);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'z':
+      {
+        /* Second unique temporary filename */
+        if (image_info != (const ImageInfo *) NULL)
+          {
+            if (strlcpy(buffer,image_info->zero,MaxTextExtent) == 0)
+              if (!AcquireTemporaryFileName(buffer))
+                break;
+            q+=(translate)(q,buffer,MaxTextExtent);
+          }
+        break;
+      }
+      case 'A':
+      {
+        /* Transparency supported */
+        FormatString(buffer,"%s",image->matte? "true" : "false");
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'C':
+      {
+        /* Image compression type */
+        FormatString(buffer,"%s",CompressionTypeToString(image->compression));
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'D':
+      {
+        /* GIF disposal method */
+        FormatString(buffer,"%d",image->dispose);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'G':
+      {
+        /* Original image width and height */
+        FormatString(buffer,"%lux%lu",image->magick_columns,image->magick_rows);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'H':
+      {
+        /* page height */
+        FormatString(buffer,"%lu",image->page.height);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'M':
+      {
+        /* Original filename specification */
+        q+=(translate)(q,image->magick_filename,MaxTextExtent);
+        break;
+      }
+      case 'O':
+      {
+        /* page offset */
+        FormatString(buffer,"%+ld%+ld",image->page.x,image->page.y);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'P':
+      {
+        /* page dimensions */
+        FormatString(buffer,"%lux%lu",image->page.width,image->page.height);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'Q':
+      {
+        /* Compression quality */
+        attribute=GetImageAttribute(image,"JPEG-Quality");
+        if (attribute != (ImageAttribute *) NULL)
+          {
+            q+=(translate)(q,attribute->value,MaxTextExtent);
+            break;
+          }
+        if (image_info != (const ImageInfo *) NULL)
+          {
+            FormatString(buffer,"%lu",image_info->quality);
+            q+=(translate)(q,buffer,MaxTextExtent);
+            break;
+          }
+        FormatString(buffer,"%lu",DefaultCompressionQuality);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'T':
+      {
+        /* time delay (in centi-seconds) */
+        FormatString(buffer,"%lu",image->delay);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'U':
+      {
+        /* resolution units */
+        FormatString(buffer,"%s",ResolutionTypeToString(image->units));
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'W':
+      {
+        /* page width */
+        FormatString(buffer,"%lu",image->page.width);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'X':
+      {
+        /* page x offset */
+        FormatString(buffer,"%+ld",image->page.x);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case 'Y':
+      {
+        /* page y offset */
+        FormatString(buffer,"%+ld",image->page.y);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case '@':
+      {
+        /* trim bounding box */
+        RectangleInfo bounds = GetImageBoundingBox(image,
+                                                   &image->exception);
+        FormatString(buffer,"%lux%lu%+ld%+ld",bounds.width,bounds.height,
+                     bounds.x,bounds.y);
+        q+=(translate)(q,buffer,MaxTextExtent);
+        break;
+      }
+      case '[':
+      {
+        /* Image attribute */
+        char
+          key[MaxTextExtent];
+
+        /* Extract attribute key string. */
+        p++;
+        for (i=0; (i < MaxTextExtent) && (*p) && (*p != ']'); i++)
+          {
+          key[i]=(*p++);
+          }
+        if (']' != *p)
+          break;
+        key[i]='\0';
+
+        /* Try to get the attibute from image */
+        attribute=GetImageAttribute(image,key);
+
+        /* Try to get the attribute from image_info */
+        if (attribute == (const ImageAttribute *) NULL)
+          if (image_info != (const ImageInfo *) NULL)
+            attribute=GetImageInfoAttribute(image_info,image,key);
+
+        if (attribute != (const ImageAttribute *) NULL)
+          {
+            /* Attributes may be larger than MaxTextExtent so make
+               sure there is sufficient memory allocated. Make sure

@@ -1,0 +1,27 @@
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 1948978906
+INFO: Loaded 1 modules   (24912 inline 8-bit counters): 24912 [0x628c0c37f1a0, 0x628c0c3852f0), 
+INFO: Loaded 1 PC tables (24912 PCs): 24912 [0x628c0c3852f0,0x628c0c3e67f0), 
+/out/mruby_fuzzer: Running 1 inputs 1 time(s) each.
+Running: /tmp/poc
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==9==ERROR: AddressSanitizer: SEGV on unknown address (pc 0x628c0c0d17a1 bp 0x7fffef020c20 sp 0x7fffef020b60 T0)
+==9==The signal is caused by a READ memory access.
+==9==Hint: this fault was caused by a dereference of a high value address (see register values below).  Disassemble the provided pc to learn which register was used.
+    #0 0x628c0c0d17a1 in udiv /src/mruby/mrbgems/mruby-bigint/core/bigint.c:499:19
+    #1 0x628c0c0c4c2d in mpz_mmod /src/mruby/mrbgems/mruby-bigint/core/bigint.c:578:3
+    #2 0x628c0c0c4c2d in mrb_bint_mod /src/mruby/mrbgems/mruby-bigint/core/bigint.c:1480:3
+    #3 0x628c0c185b58 in mrb_vm_exec /src/mruby/src/vm.c
+    #4 0x628c0c0ed3e3 in mrb_load_exec /src/mruby/mrbgems/mruby-compiler/core/parse.y:6912:7
+    #5 0x628c0c08dcb0 in LLVMFuzzerTestOneInput /src/mruby/oss-fuzz/mruby_fuzzer.c:14:5
+    #6 0x628c0bf427a0 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerLoop.cpp:614:13
+    #7 0x628c0bf2da15 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:327:6
+    #8 0x628c0bf334af in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:862:9
+    #9 0x628c0bf5e752 in main /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerMain.cpp:20:10
+    #10 0x7fa0ede4b082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 0323ab4806bee6f846d9ad4bccfc29afdca49a58)
+    #11 0x628c0bf25bfd in _start (/out/mruby_fuzzer+0x166bfd)
+
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /src/mruby/mrbgems/mruby-bigint/core/bigint.c:499:19 in udiv
+==9==ABORTING
