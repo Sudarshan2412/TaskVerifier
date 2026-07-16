@@ -70,6 +70,25 @@ Typical AI PoC generation fails silently or produces unusable code because the m
 
 ## Usage
 
+### Run Pipeline on a Specific CVE
+
+To run the pipeline on a specific CVE, follow these three steps:
+
+1. **Pull the vulnerable Docker image**:
+   ```bash
+   docker pull <docker-image-vul>  # Get the image tag from cybergym_subset.json
+   ```
+
+2. **Run the pipeline**:
+   ```bash
+   WEEK8_CVE_IDS="<cve-id>" WEEK8_MAX_ATTEMPTS=<no-of-attempts> python run_pipeline.py
+   ```
+
+3. **Remove the Docker image** (optional, to save space):
+   ```bash
+   docker rmi <docker-image-vul>  # Get the image tag from cybergym_subset.json
+   ```
+
 ### Single CVE Trial
 
 ```python
