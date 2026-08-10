@@ -137,11 +137,9 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
         # libFuzzer/compiler-rt paths used across all OSS-Fuzz projects.
         is_infra_crash = False
         if crashed:
-            _INFRA_FILES = (
-                'FuzzerTracePC.cpp', 'FuzzerLoop.cpp', 'FuzzerDriver.cpp',
-                'FuzzerIO.cpp', 'FuzzerUtil.cpp', 'FuzzerMutate.cpp',
-                'asan_malloc_linux.cpp', 'asan_new_delete.cpp',
-                'msan_interceptors.cpp', 'ubsan_diag_standalone.cc',
+            _INFRA_DIRS = (
+                'libfuzzer', 'compiler-rt', 'sanitizer_common',
+                'asan', 'ubsan', 'msan'
             )
             # Extract all source files mentioned in crash frames
             import re as _re
@@ -152,7 +150,7 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
             if crash_files:
                 infra_count = sum(
                     1 for f in crash_files
-                    if any(f.endswith(inf) for inf in _INFRA_FILES)
+                    if any(inf in f.lower() for inf in _INFRA_DIRS)
                 )
                 # If ALL crash frames are in infrastructure files, this is
                 # NOT a target crash.

@@ -267,6 +267,13 @@ def discover_fuzz_target_format(cve_entry: dict, image_name: str, fact_acc=None)
     """
     fuzz_target = cve_entry.get("fuzz_target", "")
     if not fuzz_target:
+        import re
+        crash_desc = cve_entry.get("crash_description", "")
+        match = re.search(r'(/out/[^\s:]+):\s*Running', crash_desc)
+        if match:
+            fuzz_target = match.group(1)
+
+    if not fuzz_target:
         return ""
 
     sys_msg = (

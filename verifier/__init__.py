@@ -18,12 +18,10 @@ def _extract_crash_site(output: str) -> tuple[str, int]:
     Returns (basename, line_number) or ("", 0) if nothing is found.
     Format-agnostic: matches standard sanitizer output patterns.
     """
-    _INFRA_BASENAMES = {
-        'FuzzerTracePC.cpp', 'FuzzerLoop.cpp', 'FuzzerDriver.cpp',
-        'FuzzerIO.cpp', 'FuzzerUtil.cpp', 'FuzzerMutate.cpp',
-        'asan_malloc_linux.cpp', 'asan_new_delete.cpp',
-        'msan_interceptors.cpp', 'ubsan_diag_standalone.cc',
-    }
+    _INFRA_DIRS = (
+        'libfuzzer', 'compiler-rt', 'sanitizer_common',
+        'asan', 'ubsan', 'msan'
+    )
     # Match patterns like:
     #   /src/capstonenext/arch/TMS320C64x/TMS320C64xGenAsmWriter.inc:680:18
     #   /src/php-src/Zend/zend_string.h:346:7
@@ -33,8 +31,8 @@ def _extract_crash_site(output: str) -> tuple[str, int]:
     )
     for match in file_line_pattern.finditer(output):
         filepath = match.group(1)
-        basename = os.path.basename(filepath)
-        if basename not in _INFRA_BASENAMES:
+        if not any(inf in filepath.lower() for inf in _INFRA_DIRS):
+            basename = os.path.basename(filepath)
             return (basename, int(match.group(2)))
     return ("", 0)
 
