@@ -188,6 +188,27 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
     # After dataset_sanitizer.redact_stacktrace_frames() runs, the critic
     # cannot independently verify any function name against the stacktrace.
     # Locking in a hallucinated function name is more harmful than no fact.
+
+    # ── P2: Diagnostic Conclusion Patterns ──────────────────────────────────
+    # High-level strategic conclusions derived by the critic.
+    # We want these to persist so the critic doesn't oscillate.
+    (
+        "selector_byte",
+        re.compile(
+            r"(?:harness|format|binary)\s+(?:uses|requires|needs|expects)\s+"
+            r"(?:a\s+)?(?:architecture\s+|platform\s+)?(selector byte|magic byte)",
+            re.IGNORECASE,
+        ),
+    ),
+
+    (
+        "no_selector_byte",
+        re.compile(
+            r"(?:harness|format|binary)\s+(?:does not|doesn't)\s+(?:use|require|need|expect)\s+"
+            r"(?:a\s+)?(?:architecture\s+|platform\s+)?(selector byte|magic byte)",
+            re.IGNORECASE,
+        ),
+    ),
 ]
 
 
@@ -265,8 +286,9 @@ class FactAccumulator:
                     if existing_val != value.strip():
                         if category in ("delimiter", "reads_until", "constant", "endianness", "field_count"):
                             self._contradictions[category] = (existing_val, value.strip())
-                            # Last-wins: Overwrite with the newly confirmed finding
-                            self._facts[key] = (category, value.strip())
+                            # Note: we do NOT overwrite the fact here. 
+                            # The first confirmed value wins to prevent a later wrong critic turn
+                            # from silently overwriting a correct earlier finding.
                     continue
 
                 # 2. Same category, different key (e.g. delimiter:\0 vs delimiter:backslash-newline)
@@ -280,6 +302,21 @@ class FactAccumulator:
                         old_key, (_, existing_val) = existing_in_category[0]
                         self._contradictions[category] = (existing_val, value.strip())
                         # Delete the old contradictory fact so we don't force the LLM to use it
+                        del self._facts[old_key]
+                        self._facts[key] = (category, value.strip())
+                        continue
+
+                # 3. P2: Diagnostic Conclusion Mutual Exclusion
+                # selector_byte and no_selector_byte are mutually exclusive
+                if category in ("selector_byte", "no_selector_byte"):
+                    opposite = "no_selector_byte" if category == "selector_byte" else "selector_byte"
+                    existing_opposite = [
+                        (k, v) for k, v in self._facts.items()
+                        if k.startswith(f"{opposite}:")
+                    ]
+                    if existing_opposite:
+                        old_key, (_, existing_val) = existing_opposite[0]
+                        self._contradictions["selector_byte_conflict"] = (f"{opposite} ({existing_val})", f"{category} ({value.strip()})")
                         del self._facts[old_key]
                         self._facts[key] = (category, value.strip())
                         continue

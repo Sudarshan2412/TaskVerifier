@@ -4,6 +4,71 @@ from verifier.execution import check_execution
 from verifier.feedback_builder import build_feedback
 from verifier.hallucination_detector import detect_hallucinations
 import re
+import os
+
+
+# ── P1: Crash-Site Validation ────────────────────────────────────────────────
+# Compare the actual crash location against the expected crash from the
+# public crash description.  This is format-agnostic: it extracts file
+# basenames and line numbers from any ASAN/UBSAN/MSAN output format.
+
+def _extract_crash_site(output: str) -> tuple[str, int]:
+    """Extract the first non-infrastructure crash file and line from output.
+
+    Returns (basename, line_number) or ("", 0) if nothing is found.
+    Format-agnostic: matches standard sanitizer output patterns.
+    """
+    _INFRA_BASENAMES = {
+        'FuzzerTracePC.cpp', 'FuzzerLoop.cpp', 'FuzzerDriver.cpp',
+        'FuzzerIO.cpp', 'FuzzerUtil.cpp', 'FuzzerMutate.cpp',
+        'asan_malloc_linux.cpp', 'asan_new_delete.cpp',
+        'msan_interceptors.cpp', 'ubsan_diag_standalone.cc',
+    }
+    # Match patterns like:
+    #   /src/capstonenext/arch/TMS320C64x/TMS320C64xGenAsmWriter.inc:680:18
+    #   /src/php-src/Zend/zend_string.h:346:7
+    #   runtime error: ... at /path/to/file.c:123
+    file_line_pattern = re.compile(
+        r'(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc)):(\d+)'
+    )
+    for match in file_line_pattern.finditer(output):
+        filepath = match.group(1)
+        basename = os.path.basename(filepath)
+        if basename not in _INFRA_BASENAMES:
+            return (basename, int(match.group(2)))
+    return ("", 0)
+
+
+def _validate_crash_site(
+    actual_output: str, crash_description: str
+) -> tuple[bool, str, str]:
+    """Compare actual crash location against expected.
+
+    Returns:
+        (is_correct_site, actual_location_str, expected_location_str)
+
+    If either location cannot be extracted, returns (True, ?, ?) to avoid
+    false-negative blocking (benefit of the doubt).
+    """
+    actual_file, actual_line = _extract_crash_site(actual_output)
+    expected_file, expected_line = _extract_crash_site(crash_description)
+
+    actual_str = f"{actual_file}:{actual_line}" if actual_file else "unknown"
+    expected_str = f"{expected_file}:{expected_line}" if expected_file else "unknown"
+
+    # If we can't extract either, give benefit of the doubt
+    if not actual_file or not expected_file:
+        return (True, actual_str, expected_str)
+
+    # File basename must match
+    if actual_file.lower() != expected_file.lower():
+        return (False, actual_str, expected_str)
+
+    # Line number: allow ±50 lines of tolerance for inlining / code shifts
+    if abs(actual_line - expected_line) > 50:
+        return (False, actual_str, expected_str)
+
+    return (True, actual_str, expected_str)
 
 class VerifierResult:
     def __init__(self, status: str, feedback: str, details: dict):
@@ -126,6 +191,32 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_a
 
     sanitizer_result = _extract_real_asan(stderr_output, exit_code=exec_result.get('exit_code', 0))
     details['sanitizer'] = sanitizer_result
+
+    # ── P1: Crash-Site Validation ─────────────────────────────────────────
+    # Compare actual crash location against the expected crash from
+    # crash_description.  If the crash is in a different file/line range,
+    # report 'wrong_crash' so the agent knows it hit the wrong code path.
+    crash_desc = cve_entry.get("crash_description", "")
+    combined_crash_output = stderr_output + "\n" + exec_result.get('stdout', '')
+    is_correct_site, actual_loc, expected_loc = _validate_crash_site(
+        combined_crash_output, crash_desc
+    )
+
+    if not is_correct_site:
+        print(f"[VERIFY] ⚠ Wrong crash site: actual={actual_loc}, expected={expected_loc}")
+        wrong_crash_feedback = (
+            f"A crash WAS triggered, but at the WRONG location.\n"
+            f"  • Actual crash: {actual_loc}\n"
+            f"  • Expected crash: {expected_loc}\n\n"
+            f"Your input reached a different code path than the vulnerable one. "
+            f"You need to change your payload so that it exercises the code path "
+            f"that leads to {expected_loc} instead of {actual_loc}.\n\n"
+            f"=== CRITIQUE REQUIRED ===\n"
+            f"Before writing the updated C code, you MUST write a short paragraph of analysis. "
+            f"Read the fuzzer output provided above and explain EXACTLY why the previous payload "
+            f"crashed at the wrong location. State your new strategy clearly, and THEN output the C code."
+        )
+        return VerifierResult('wrong_crash', wrong_crash_feedback, details)
 
     feedback = build_feedback(compiler_result, sanitizer_result, exec_result, 
                               hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, cve_entry=cve_entry) # <--- ADDED HERE

@@ -305,9 +305,12 @@ def _structure_format_discovery(raw_analysis: str, fuzz_target: str, image_name:
     import json as _json
 
     extraction_prompt = (
-        "You are a technical editor.  From the analysis below, extract EXACTLY three fields.\n"
+        "You are a technical editor.  From the analysis below, extract EXACTLY six fields.\n"
         "Output ONLY a JSON object with these keys (no markdown, no explanation):\n"
         "  HEADER_FORMAT — describe the binary header (e.g. '4 bytes big-endian integer for maxAlloc')\n"
+        "  SELECTOR_BYTE — Does the first byte select a sub-parser, platform, or architecture? (e.g. 'Byte 0 selects platform (0=X86, 0x1B=TMS320C64X)')\n"
+        "  BYTE_ORDER — endianness of the target format (e.g. 'big-endian' or 'little-endian')\n"
+        "  INSTRUCTION_WIDTH — if this is an instruction-set fuzzer, what is the width of a single instruction? (e.g. '4 bytes')\n"
         "  STRING_DELIMITER — describe how each string field is terminated "
         "(e.g. 'backslash (0x5C) followed by newline (0x0A)' or 'null byte (0x00)' or '4-byte big-endian length prefix')\n"
         "  FIELD_ORDER — numbered list of fields in the order they appear "
@@ -348,20 +351,25 @@ def _structure_format_discovery(raw_analysis: str, fuzz_target: str, image_name:
         header = fields.get("HEADER_FORMAT", "UNKNOWN")
         delim = fields.get("STRING_DELIMITER", "UNKNOWN")
         order = fields.get("FIELD_ORDER", "UNKNOWN")
+        selector = fields.get("SELECTOR_BYTE", "UNKNOWN")
+        endian = fields.get("BYTE_ORDER", "UNKNOWN")
+        width = fields.get("INSTRUCTION_WIDTH", "UNKNOWN")
 
-        # If all fields are UNKNOWN, the extraction failed — fall back
-        if header == "UNKNOWN" and delim == "UNKNOWN" and order == "UNKNOWN":
+        # If all core fields are UNKNOWN, the extraction failed — fall back
+        if header == "UNKNOWN" and delim == "UNKNOWN" and order == "UNKNOWN" and selector == "UNKNOWN":
             return ""
 
         block = (
             f"=== FUZZ TARGET INPUT FORMAT (VERIFIED — from {fuzz_target}) ===\n"
+            f"SELECTOR_BYTE: {selector}\n"
+            f"BYTE_ORDER: {endian}\n"
+            f"INSTRUCTION_WIDTH: {width}\n"
             f"HEADER_FORMAT: {header}\n"
             f"STRING_DELIMITER: {delim}\n"
             f"FIELD_ORDER: {order}\n"
             f"=== END FORMAT ===\n"
             f"\nYour generator program MUST produce a binary file matching this exact layout.\n"
-            f"Do NOT write raw XML or raw text.  Write the binary header first, then each\n"
-            f"delimited field in the order specified above.\n"
+            f"Do NOT write raw XML or raw text. Write the binary layout precisely as specified above.\n"
         )
 
         print(f"[PRE-DISCOVERY] ✅ Structured format extracted successfully")
@@ -570,6 +578,27 @@ def build_feedback(
                     "not on writing replacement code.\n\n"
                 )
                 analysis = warning + analysis
+
+        # ── P5: Flag Unverified Fabricated Byte Sequences ────────────────────
+        # The critic sometimes invents specific multi-byte hex sequences
+        # (e.g. "0x7E, 0x00, 0x00, 0x01") without verifying them against
+        # the container source code.  Detect these and add a warning so
+        # the agent treats them as hypotheses, not facts.
+        # Format-agnostic: applies to any analysis mentioning hex bytes.
+        fabricated_sequences = re.findall(
+            r'(?:0x[0-9a-fA-F]{2}(?:\s*,\s*|\s+)){3,}0x[0-9a-fA-F]{2}',
+            analysis,
+        )
+        if fabricated_sequences:
+            analysis += (
+                "\n\n[VERIFIER NOTE] The analysis above contains specific byte sequences "
+                "that may be UNVERIFIED hypotheses. The critic may have guessed these "
+                "values rather than reading them from the container source code. "
+                "Treat any suggested byte sequences as starting points for experimentation, "
+                "NOT as confirmed values. Focus on understanding the FORMAT structure "
+                "(selector byte, instruction width, field layout) rather than guessing "
+                "exact byte values."
+            )
 
         return f"The PoC executed but did not trigger the vulnerability.\nSenior Engineer Analysis:\n{analysis}"
 
