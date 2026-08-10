@@ -292,8 +292,9 @@ def discover_fuzz_target_format(cve_entry: dict, image_name: str, fact_acc=None)
     if structured:
         return structured
 
-    # Fallback: return the raw analysis prefixed with a label
-    return f"Fuzz Target Input Format Discovery (from {fuzz_target}):\n{raw_analysis}"
+    # Fallback: Extraction failed. Return empty string to prevent injecting unstructured/raw thoughts.
+    print(f"[PRE-DISCOVERY] ⚠️ Extraction failed. Returning empty string to prevent leakage.")
+    return ""
 
 
 def _structure_format_discovery(raw_analysis: str, fuzz_target: str, image_name: str, fact_acc=None) -> str:
@@ -489,20 +490,8 @@ def build_feedback(
         if failed_approaches:
             usr_msg += f"\n\n{failed_approaches}"
 
-        if previous_feedback:
-            lines = previous_feedback.split('\n')
-            cutoff_markers = ["## Instructions", "Instructions to the Junior", "Junior Engineer"]
-            cutoff = 0
-            for i, line in enumerate(lines):
-                if any(m in line for m in cutoff_markers):
-                    cutoff = i
-                    break
-            condensed = '\n'.join(lines[cutoff:cutoff+20]) if cutoff > 0 else previous_feedback[-400:]
-            usr_msg += (
-                f"\nPrevious analysis conclusion (treat as hypothesis, not fact):\n"
-                f"{condensed}\n\n"
-                f"If your tool results contradict this, trust the tools.\n\n"
-            )
+        # Removed previous_feedback injection here to prevent hallucination cascades.
+        # The failed_approaches block injected above is sufficient.
 
         if hallucinated_symbols:
             syms = ', '.join(hallucinated_symbols[:5])
