@@ -141,22 +141,45 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
                 'libfuzzer', 'compiler-rt', 'sanitizer_common',
                 'asan', 'ubsan', 'msan'
             )
-            # Extract all source files mentioned in crash frames
             import re as _re
-            crash_files = _re.findall(
-                r'(?:in\s+\S+\s+|at\s+)(/[^\s:]+\.\w+)',
-                combined_output,
+            
+            # 1. Direct explicit sanitizer error match
+            # E.g., "/src/libfuzzer/FuzzerTracePC.cpp:369:62: runtime error:" 
+            # or "SUMMARY: AddressSanitizer: ... /src/libfuzzer/..."
+            infra_err_match = _re.search(
+                r'(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc)):\d+(?::\d+)?: runtime error:',
+                combined_output
             )
-            if crash_files:
-                infra_count = sum(
-                    1 for f in crash_files
-                    if any(inf in f.lower() for inf in _INFRA_DIRS)
+            summary_match = _re.search(
+                r'SUMMARY:.*(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc))',
+                combined_output
+            )
+            
+            explicit_infra_file = None
+            if infra_err_match:
+                explicit_infra_file = infra_err_match.group(1)
+            elif summary_match:
+                explicit_infra_file = summary_match.group(1)
+
+            if explicit_infra_file and any(inf in explicit_infra_file.lower() for inf in _INFRA_DIRS):
+                is_infra_crash = True
+            else:
+                # 2. Fallback to frame counting
+                crash_files = _re.findall(
+                    r'(?:in\s+\S+\s+|at\s+)(/[^\s:]+\.\w+)',
+                    combined_output,
                 )
-                # If ALL crash frames are in infrastructure files, this is
-                # NOT a target crash.
-                is_infra_crash = (infra_count == len(crash_files))
-                if is_infra_crash:
-                    print(f"[EXEC] ⚠ Crash is in fuzzer infrastructure, not target library.")
+                if crash_files:
+                    infra_count = sum(
+                        1 for f in crash_files
+                        if any(inf in f.lower() for inf in _INFRA_DIRS)
+                    )
+                    # If ALL crash frames are in infrastructure files, this is
+                    # NOT a target crash.
+                    is_infra_crash = (infra_count == len(crash_files))
+            
+            if is_infra_crash:
+                print(f"[EXEC] ⚠ Crash is in fuzzer infrastructure, not target library.")
 
         # --- THE REQUIRED RETURN BLOCK ---
         if crashed and not is_infra_crash:

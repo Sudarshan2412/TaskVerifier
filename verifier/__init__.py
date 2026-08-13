@@ -202,19 +202,10 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_a
 
     if not is_correct_site:
         print(f"[VERIFY] ⚠ Wrong crash site: actual={actual_loc}, expected={expected_loc}")
-        wrong_crash_feedback = (
-            f"A crash WAS triggered, but at the WRONG location.\n"
-            f"  • Actual crash: {actual_loc}\n"
-            f"  • Expected crash: {expected_loc}\n\n"
-            f"Your input reached a different code path than the vulnerable one. "
-            f"You need to change your payload so that it exercises the code path "
-            f"that leads to {expected_loc} instead of {actual_loc}.\n\n"
-            f"=== CRITIQUE REQUIRED ===\n"
-            f"Before writing the updated C code, you MUST write a short paragraph of analysis. "
-            f"Read the fuzzer output provided above and explain EXACTLY why the previous payload "
-            f"crashed at the wrong location. State your new strategy clearly, and THEN output the C code."
-        )
-        return VerifierResult('wrong_crash', wrong_crash_feedback, details)
+        feedback = build_feedback(compiler_result, sanitizer_result, exec_result,
+                                  hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, cve_entry=cve_entry,
+                                  is_wrong_crash=True, actual_loc=actual_loc, expected_loc=expected_loc, combined_crash_output=combined_crash_output)
+        return VerifierResult('wrong_crash', feedback, details)
 
     feedback = build_feedback(compiler_result, sanitizer_result, exec_result, 
                               hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, cve_entry=cve_entry) # <--- ADDED HERE
