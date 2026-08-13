@@ -110,12 +110,15 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
         is_signal_crash = exit_code > 128 and exit_code != 137
 
         # Rule 2: Sanitizer keywords in output confirm a real memory violation.
+        # P8: UBSAN often reports as 'runtime error:' without the full
+        # 'UndefinedBehaviorSanitizer:' prefix.  Include that pattern.
         combined_output = run_result.stderr + "\n" + run_result.stdout
         sanitizer_keywords = [
             'AddressSanitizer:', 'MemorySanitizer:',
             'UndefinedBehaviorSanitizer:', 'LeakSanitizer:',
             'SUMMARY: AddressSanitizer', 'SUMMARY: MemorySanitizer',
             'SUMMARY: UndefinedBehaviorSanitizer',
+            'runtime error:',  # P8: UBSAN short form
         ]
         has_sanitizer_output = any(kw in combined_output for kw in sanitizer_keywords)
 
@@ -127,13 +130,58 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
         else:
             print(f"[EXEC] ✗ No crash. Exit code {exit_code}, no sanitizer output.")
 
-        # --- THE REQUIRED RETURN BLOCK ---
+        # ── P3: Infrastructure Crash Classification ──────────────────────────
+        # Distinguish crashes in the target library from crashes in fuzzer
+        # infrastructure (libFuzzer internals, sanitizer runtime, etc.).
+        # Format-agnostic: the infrastructure file list covers standard
+        # libFuzzer/compiler-rt paths used across all OSS-Fuzz projects.
+        is_infra_crash = False
         if crashed:
-            print(f"[EXEC] ✓ CRASH detected!")
+            _INFRA_DIRS = (
+                'libfuzzer', 'compiler-rt', 'sanitizer_common',
+                'asan', 'ubsan', 'msan'
+            )
+            # Extract all source files mentioned in crash frames
+            import re as _re
+            crash_files = _re.findall(
+                r'(?:in\s+\S+\s+|at\s+)(/[^\s:]+\.\w+)',
+                combined_output,
+            )
+            if crash_files:
+                infra_count = sum(
+                    1 for f in crash_files
+                    if any(inf in f.lower() for inf in _INFRA_DIRS)
+                )
+                # If ALL crash frames are in infrastructure files, this is
+                # NOT a target crash.
+                is_infra_crash = (infra_count == len(crash_files))
+                if is_infra_crash:
+                    print(f"[EXEC] ⚠ Crash is in fuzzer infrastructure, not target library.")
+
+        # --- THE REQUIRED RETURN BLOCK ---
+        if crashed and not is_infra_crash:
+            print(f"[EXEC] ✓ TARGET CRASH detected!")
             return {
                 'triggered': True,
                 'exit_code': exit_code,
                 'message': 'Program crashed — vulnerability was triggered.',
+                'stderr': run_result.stderr,
+                'stdout': run_result.stdout,
+                'fuzzer_cmd': docker_cmd_str,
+            }
+        elif crashed and is_infra_crash:
+            print(f"[EXEC] ⚠ Infrastructure crash (not target vulnerability).")
+            return {
+                'triggered': False,
+                'exit_code': exit_code,
+                'infrastructure_crash': True,
+                'message': (
+                    'Your input caused a crash in the fuzzer infrastructure '
+                    '(e.g. libFuzzer instrumentation or sanitizer runtime), '
+                    'NOT in the target library. This usually means your input '
+                    'format is invalid, too large, or triggers an unrelated '
+                    'instrumentation bug. The vulnerable code path was not reached.'
+                ),
                 'stderr': run_result.stderr,
                 'stdout': run_result.stdout,
                 'fuzzer_cmd': docker_cmd_str,

@@ -141,17 +141,25 @@ def _extract_approach_note(poc_code: str, feedback_text: str) -> str:
 def _structural_fingerprint(poc_code: str) -> str:
     """
     Creates a structural fingerprint of the C code by stripping comments,
-    string literals, numbers, and whitespace. This catches superficial variations
-    like changing a namespace string or a variable name while keeping the exact
-    same code structure.
+    string literals, hex byte values, and whitespace — but PRESERVING
+    structurally significant numbers such as loop bounds, array sizes, and
+    fputc call counts.
+
+    P4 improvement: the previous version replaced ALL numbers with 0,
+    causing fundamentally different payloads (5 bytes vs 64 bytes) to
+    fingerprint as identical.  This version normalizes only hex literals
+    (0x...) and keeps decimal loop bounds and array sizes so that
+    payloads with different lengths are correctly distinguished.
+
+    Format-agnostic: applies to any C code regardless of vulnerability class.
     """
     # Remove comments
     code = re.sub(r'//.*?\n|/\*.*?\*/', '', poc_code, flags=re.DOTALL)
     # Remove string literals and char literals
     code = re.sub(r'"(?:\\.|[^"\\])*"', '""', code)
     code = re.sub(r"'(?:\\.|[^'\\])*'", "''", code)
-    # Replace numbers with 0
-    code = re.sub(r'\b\d+\b|\b0x[0-9a-fA-F]+\b', '0', code)
+    # Replace ONLY hex literals with a placeholder (these are byte values)
+    code = re.sub(r'\b0x[0-9a-fA-F]+\b', '0xNN', code)
     # Remove all whitespace
     code = re.sub(r'\s+', '', code)
     return hashlib.md5(code.encode()).hexdigest()
@@ -213,11 +221,15 @@ def run_agent(
 
     attempt = 1
     duplicate_retries = 0
+    total_iterations = 0       # P7: safety cap on all iterations (incl. duplicates)
     stuck_counter = 0
     last_fingerprint = ""
     last_status = ""
 
-    while attempt <= max_attempts:
+    # P7: Loop until we exhaust real execution attempts OR hit the safety cap
+    # (2× max_attempts) to prevent infinite spinning on duplicates.
+    while attempt <= max_attempts and total_iterations < max_attempts * 2:
+        total_iterations += 1
         logger.debug(f"CVE {cve_id}: Attempt {attempt}/{max_attempts}")
         sl.log_attempt_header(attempt, max_attempts)
 
@@ -307,8 +319,10 @@ def run_agent(
                 })
                 hallucinated_per_attempt.append([])
                 duplicate_retries += 1
+                # P7: Duplicates do NOT consume execution attempt slots.
+                # Only reset after 3 consecutive duplicates to avoid
+                # infinite spinning (the total_iterations cap catches this).
                 if duplicate_retries >= 3:
-                    attempt += 1
                     duplicate_retries = 0
                 continue
             seen_poc_hashes.add(poc_hash)
@@ -334,8 +348,8 @@ def run_agent(
                 })
                 hallucinated_per_attempt.append([])
                 duplicate_retries += 1
+                # P7: Structural duplicates do NOT consume execution attempts.
                 if duplicate_retries >= 3:
-                    attempt += 1
                     duplicate_retries = 0
                 continue
             
