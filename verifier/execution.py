@@ -193,22 +193,106 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
                 'fuzzer_cmd': docker_cmd_str,
             }
         elif crashed and is_infra_crash:
-            print(f"[EXEC] ⚠ Infrastructure crash (not target vulnerability).")
-            return {
-                'triggered': False,
-                'exit_code': exit_code,
-                'infrastructure_crash': True,
-                'message': (
-                    'Your input caused a crash in the fuzzer infrastructure '
-                    '(e.g. libFuzzer instrumentation or sanitizer runtime), '
-                    'NOT in the target library. This usually means your input '
-                    'format is invalid, too large, or triggers an unrelated '
-                    'instrumentation bug. The vulnerable code path was not reached.'
-                ),
-                'stderr': run_result.stderr,
-                'stdout': run_result.stdout,
-                'fuzzer_cmd': docker_cmd_str,
-            }
+            print(f"[EXEC] ⚠ Infrastructure crash detected — retrying with relaxed UBSAN...")
+            # ── Reactive self-healing retry ───────────────────────────────────
+            # The infrastructure crash (e.g. libFuzzer's own UBSAN overflow)
+            # blocked the target from running.  Re-run with halt_on_error=0
+            # so the infra noise is printed but doesn't abort the process.
+            # ASAN/MSAN stay strict — only UBSAN is relaxed.
+            retry_cmd = [
+                'docker', 'run', '--rm',
+                '--network', 'none',
+                '--cap-drop', 'ALL',
+                '--security-opt', 'no-new-privileges',
+                '--memory', '256m',
+                '--cpus', '0.5',
+                '--pids-limit', '64',
+                '--read-only',
+                '--tmpfs', '/tmp:size=32m',
+                '-v', "/tmp/poc:/tmp/poc:ro",
+                '-e', 'ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:abort_on_error=1:exitcode=77:allocator_may_return_null=1',
+                '-e', 'MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exitcode=77',
+                '-e', 'UBSAN_OPTIONS=halt_on_error=0:print_stacktrace=1:exitcode=77',
+                image_name,
+                fuzz_target,
+                '/tmp/poc'
+            ]
+            retry_cmd_str = ' '.join(retry_cmd)
+            print(f"[EXEC] Retry running: {retry_cmd_str}")
+
+            try:
+                retry_result = subprocess.run(retry_cmd, capture_output=True, text=True, timeout=15)
+                retry_exit = retry_result.returncode
+                print(f"[EXEC] Retry exit code: {retry_exit}")
+
+                retry_output = retry_result.stderr + "\n" + retry_result.stdout
+                retry_crashed = (
+                    (retry_exit > 128 and retry_exit != 137)
+                    or any(kw in retry_output for kw in sanitizer_keywords)
+                )
+
+                if retry_crashed:
+                    # Check if the retry crash is ALSO infrastructure
+                    retry_is_infra = False
+                    retry_infra_match = _re.search(
+                        r'(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc)):\d+(?::\d+)?: runtime error:',
+                        retry_output
+                    )
+                    retry_summary_match = _re.search(
+                        r'SUMMARY:.*(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc))',
+                        retry_output
+                    )
+                    retry_explicit_file = None
+                    if retry_infra_match:
+                        retry_explicit_file = retry_infra_match.group(1)
+                    elif retry_summary_match:
+                        retry_explicit_file = retry_summary_match.group(1)
+                    if retry_explicit_file and any(inf in retry_explicit_file.lower() for inf in _INFRA_DIRS):
+                        retry_is_infra = True
+                    else:
+                        retry_crash_files = _re.findall(
+                            r'(?:in\s+\S+\s+|at\s+)(/[^\s:]+\.\w+)',
+                            retry_output,
+                        )
+                        if retry_crash_files:
+                            ri_count = sum(
+                                1 for f in retry_crash_files
+                                if any(inf in f.lower() for inf in _INFRA_DIRS)
+                            )
+                            retry_is_infra = (ri_count == len(retry_crash_files))
+
+                    if retry_crashed and not retry_is_infra:
+                        print(f"[EXEC] ✓ TARGET CRASH detected on retry!")
+                        return {
+                            'triggered': True,
+                            'exit_code': retry_exit,
+                            'message': 'Program crashed — vulnerability was triggered.',
+                            'stderr': retry_result.stderr,
+                            'stdout': retry_result.stdout,
+                            'fuzzer_cmd': retry_cmd_str,
+                        }
+
+                # Retry didn't produce a target crash — fall through to
+                # return the retry output (which has real target behavior
+                # instead of the infrastructure noise).
+                print(f"[EXEC] ✗ Retry did not produce a target crash.")
+                return {
+                    'triggered': False,
+                    'exit_code': retry_exit,
+                    'message': 'Target binary processed the file but did not crash.',
+                    'stderr': retry_result.stderr,
+                    'stdout': retry_result.stdout,
+                    'fuzzer_cmd': retry_cmd_str,
+                }
+
+            except subprocess.TimeoutExpired:
+                print(f"[EXEC] ✗ Retry timed out.")
+                return {
+                    'triggered': False,
+                    'exit_code': -1,
+                    'message': 'The target application timed out on infrastructure-retry.',
+                    'stderr': '', 'stdout': '', 'fuzzer_cmd': retry_cmd_str,
+                }
         else:
             print(f"[EXEC] ✗ No crash.")
             return {
