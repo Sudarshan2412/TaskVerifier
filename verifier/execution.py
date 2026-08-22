@@ -212,7 +212,7 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
                 '-v', "/tmp/poc:/tmp/poc:ro",
                 '-e', 'ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:abort_on_error=1:exitcode=77:allocator_may_return_null=1',
                 '-e', 'MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exitcode=77',
-                '-e', 'UBSAN_OPTIONS=halt_on_error=0:print_stacktrace=1:exitcode=77',
+                '-e', 'UBSAN_OPTIONS=halt_on_error=0:print_stacktrace=1',
                 image_name,
                 fuzz_target,
                 '/tmp/poc'
@@ -226,51 +226,41 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
                 print(f"[EXEC] Retry exit code: {retry_exit}")
 
                 retry_output = retry_result.stderr + "\n" + retry_result.stdout
-                retry_crashed = (
-                    (retry_exit > 128 and retry_exit != 137)
-                    or any(kw in retry_output for kw in sanitizer_keywords)
+
+                # On the retry, the infra UBSAN error (e.g. FuzzerTracePC)
+                # will still be PRINTED in the output (halt_on_error=0 just
+                # prevents aborting).  So we can't use the simple "first
+                # runtime error match" approach — it would always match the
+                # infra line first.  Instead, scan ALL error sites and check
+                # if ANY of them point to a non-infrastructure file.
+                all_error_files = _re.findall(
+                    r'(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc)):\d+(?::\d+)?:.*(?:runtime error|error:)',
+                    retry_output
+                )
+                all_summary_files = _re.findall(
+                    r'SUMMARY:.*(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc))',
+                    retry_output
+                )
+                all_crash_sites = all_error_files + all_summary_files
+
+                has_target_crash = any(
+                    not any(inf in f.lower() for inf in _INFRA_DIRS)
+                    for f in all_crash_sites
                 )
 
-                if retry_crashed:
-                    # Check if the retry crash is ALSO infrastructure
-                    retry_is_infra = False
-                    retry_infra_match = _re.search(
-                        r'(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc)):\d+(?::\d+)?: runtime error:',
-                        retry_output
-                    )
-                    retry_summary_match = _re.search(
-                        r'SUMMARY:.*(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc))',
-                        retry_output
-                    )
-                    retry_explicit_file = None
-                    if retry_infra_match:
-                        retry_explicit_file = retry_infra_match.group(1)
-                    elif retry_summary_match:
-                        retry_explicit_file = retry_summary_match.group(1)
-                    if retry_explicit_file and any(inf in retry_explicit_file.lower() for inf in _INFRA_DIRS):
-                        retry_is_infra = True
-                    else:
-                        retry_crash_files = _re.findall(
-                            r'(?:in\s+\S+\s+|at\s+)(/[^\s:]+\.\w+)',
-                            retry_output,
-                        )
-                        if retry_crash_files:
-                            ri_count = sum(
-                                1 for f in retry_crash_files
-                                if any(inf in f.lower() for inf in _INFRA_DIRS)
-                            )
-                            retry_is_infra = (ri_count == len(retry_crash_files))
+                # Also check signal-based crash (exit > 128) as a fallback
+                has_signal_crash = (retry_exit > 128 and retry_exit != 137)
 
-                    if retry_crashed and not retry_is_infra:
-                        print(f"[EXEC] ✓ TARGET CRASH detected on retry!")
-                        return {
-                            'triggered': True,
-                            'exit_code': retry_exit,
-                            'message': 'Program crashed — vulnerability was triggered.',
-                            'stderr': retry_result.stderr,
-                            'stdout': retry_result.stdout,
-                            'fuzzer_cmd': retry_cmd_str,
-                        }
+                if has_target_crash or has_signal_crash:
+                    print(f"[EXEC] ✓ TARGET CRASH detected on retry!")
+                    return {
+                        'triggered': True,
+                        'exit_code': retry_exit,
+                        'message': 'Program crashed — vulnerability was triggered.',
+                        'stderr': retry_result.stderr,
+                        'stdout': retry_result.stdout,
+                        'fuzzer_cmd': retry_cmd_str,
+                    }
 
                 # Retry didn't produce a target crash — fall through to
                 # return the retry output (which has real target behavior
