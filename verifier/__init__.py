@@ -22,18 +22,38 @@ def _extract_crash_site(output: str) -> tuple[str, int]:
         'libfuzzer', 'compiler-rt', 'sanitizer_common',
         'asan', 'ubsan', 'msan'
     )
-    # Match patterns like:
-    #   /src/capstonenext/arch/TMS320C64x/TMS320C64xGenAsmWriter.inc:680:18
-    #   /src/php-src/Zend/zend_string.h:346:7
-    #   runtime error: ... at /path/to/file.c:123
-    file_line_pattern = re.compile(
-        r'(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc)):(\d+)'
-    )
+    
+    # 1. Try to find a SUMMARY line first (most reliable for the fatal crash)
+    summary_pattern = re.compile(r'SUMMARY:.*?(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc)):(\d+)')
+    for match in summary_pattern.finditer(output):
+        filepath = match.group(1)
+        if not any(inf in filepath.lower() for inf in _INFRA_DIRS):
+            return (os.path.basename(filepath), int(match.group(2)))
+            
+    # 2. Try to find the actual error line (runtime error: or ERROR:)
+    error_pattern = re.compile(r'(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc)):(\d+)(?::\d+)?:\s*(?:runtime error|ERROR):')
+    for match in error_pattern.finditer(output):
+        filepath = match.group(1)
+        if not any(inf in filepath.lower() for inf in _INFRA_DIRS):
+            return (os.path.basename(filepath), int(match.group(2)))
+
+    # 3. Fallback: scan all file paths, but try to skip libFuzzer stack traces
+    file_line_pattern = re.compile(r'(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc)):(\d+)')
     for match in file_line_pattern.finditer(output):
         filepath = match.group(1)
         if not any(inf in filepath.lower() for inf in _INFRA_DIRS):
-            basename = os.path.basename(filepath)
-            return (basename, int(match.group(2)))
+            # Hack: if it's fuzz_disasm.c and we haven't found a better match, keep searching
+            # just in case it's a harness file in an infra stack trace. But we'll take it if 
+            # it's the only thing we find.
+            if "fuzz_" not in filepath.lower():
+                return (os.path.basename(filepath), int(match.group(2)))
+                
+    # 4. Absolute fallback
+    for match in file_line_pattern.finditer(output):
+        filepath = match.group(1)
+        if not any(inf in filepath.lower() for inf in _INFRA_DIRS):
+            return (os.path.basename(filepath), int(match.group(2)))
+            
     return ("", 0)
 
 
