@@ -42,9 +42,9 @@ def _extract_crash_site(output: str) -> tuple[str, int]:
     for match in file_line_pattern.finditer(output):
         filepath = match.group(1)
         if not any(inf in filepath.lower() for inf in _INFRA_DIRS):
-            # Hack: if it's fuzz_disasm.c and we haven't found a better match, keep searching
-            # just in case it's a harness file in an infra stack trace. But we'll take it if 
-            # it's the only thing we find.
+            # Skip fuzzer harness files (fuzz_*.c) in favour of library source files.
+            # Harness files often appear in infra stack traces and are rarely the
+            # actual crash site.  We'll still accept them in fallback stage 4.
             if "fuzz_" not in filepath.lower():
                 return (os.path.basename(filepath), int(match.group(2)))
                 
