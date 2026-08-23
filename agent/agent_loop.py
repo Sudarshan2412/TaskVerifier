@@ -141,15 +141,13 @@ def _extract_approach_note(poc_code: str, feedback_text: str) -> str:
 def _structural_fingerprint(poc_code: str) -> str:
     """
     Creates a structural fingerprint of the C code by stripping comments,
-    string literals, hex byte values, and whitespace — but PRESERVING
-    structurally significant numbers such as loop bounds, array sizes, and
-    fputc call counts.
+    string literals, and whitespace — but PRESERVING structurally significant numbers
+    such as loop bounds, array sizes, and hex byte values.
 
     P4 improvement: the previous version replaced ALL numbers with 0,
     causing fundamentally different payloads (5 bytes vs 64 bytes) to
-    fingerprint as identical.  This version normalizes only hex literals
-    (0x...) and keeps decimal loop bounds and array sizes so that
-    payloads with different lengths are correctly distinguished.
+    fingerprint as identical.  This version normalizes NO numbers or hex literals,
+    so that payloads with different lengths and byte configurations are correctly distinguished.
 
     Format-agnostic: applies to any C code regardless of vulnerability class.
     """
@@ -158,8 +156,6 @@ def _structural_fingerprint(poc_code: str) -> str:
     # Remove string literals and char literals
     code = re.sub(r'"(?:\\.|[^"\\])*"', '""', code)
     code = re.sub(r"'(?:\\.|[^'\\])*'", "''", code)
-    # Replace ONLY hex literals with a placeholder (these are byte values)
-    code = re.sub(r'\b0x[0-9a-fA-F]+\b', '0xNN', code)
     # Remove all whitespace
     code = re.sub(r'\s+', '', code)
     return hashlib.md5(code.encode()).hexdigest()
