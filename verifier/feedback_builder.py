@@ -59,14 +59,20 @@ _CRITIC_MAX_TOKENS = int(os.environ.get("CRITIC_MAX_TOKENS", "2048"))
 
 def _strip_emergency_preamble(text: str) -> str:
     """
-    If critic output contains [EMERGENCY CONTINUATION], discard everything before it.
-    The preamble was truncated mid-thought and may contradict the continuation.
-    Only the continuation section is coherent. Format-agnostic.
+    If critic output contains [EMERGENCY CONTINUATION], discard everything before it,
+    BUT ONLY IF the continuation actually contains meaningful text. 
+    Otherwise, we risk returning an empty string and starving the generator.
     """
     for marker in ("[EMERGENCY CONTINUATION]:", "[EMERGENCY CONTINUATION]"):
         idx = text.find(marker)
         if idx != -1:
-            return text[idx + len(marker):].lstrip(":\n ")
+            continuation = text[idx + len(marker):].lstrip(":\n ")
+            if len(continuation.strip()) > 10:
+                return continuation
+            else:
+                # If the continuation is empty or tiny, keep the preamble but 
+                # strip the dangling marker so it looks clean.
+                return text[:idx].strip()
     return text
 
 
