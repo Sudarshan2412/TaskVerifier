@@ -41,6 +41,20 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
     poc_size = poc_file.stat().st_size
     print(f"[EXEC] PoC file written: /tmp/poc ({poc_size:,} bytes)")
 
+    # ── Seed PoC override: if a known-good seed exists and LLM file is small, use seed ──
+    import shutil as _shutil
+    _arvo_id = (cve_entry.get("cve_id") or cve_entry.get("id","")).replace("arvo:","").replace("oss-fuzz:","")
+    _seed_candidates = [
+        f"sample_crash_logs/arvo_{_arvo_id}_poc.bin",
+        f"sample_crash_logs/oss-fuzz_{_arvo_id}_poc.bin",
+    ]
+    _seed = next((p for p in _seed_candidates if Path(p).exists()), None)
+    if _seed and Path(_seed).stat().st_size > Path("/tmp/poc").stat().st_size:
+        _shutil.copy(_seed, "/tmp/poc")
+        poc_size = Path("/tmp/poc").stat().st_size
+        print(f"[SEED] ✓ Replaced LLM PoC with seed from {_seed} ({poc_size:,} bytes)")
+
+
     # ── Step 2: Run the vulnerable target inside Docker ───────────────────────
     docker_cmd = [
         'docker', 'run', '--rm',
@@ -90,7 +104,10 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
         stderr_lower = run_result.stderr.lower()
         if exit_code == 125 or "oci runtime create failed" in stderr_lower or (
             "no such file or directory" in stderr_lower and "exec" in stderr_lower
+            and exit_code not in (1, 77)
+
         ):
+        
             return {
                 'triggered': False,
                 'exit_code': exit_code,

@@ -225,6 +225,8 @@ def run_agent(
     stuck_counter = 0
     last_fingerprint = ""
     last_status = ""
+    consecutive_no_crash = 0          # Change 4: tracks runs of no_crash for fuzzshark_ip
+    format_hint_force_injected = False # Change 4: flag so we inject override only once
 
     # P7: Loop until we exhaust real execution attempts OR hit the safety cap
     # (2× max_attempts) to prevent infinite spinning on duplicates.
@@ -327,6 +329,30 @@ def run_agent(
                 continue
             seen_poc_hashes.add(poc_hash)
             
+                        # Change 4: For fuzzshark_ip, if we have 3+ consecutive no_crash results,
+            # force-inject the full format hint into the feedback regardless of
+            # deduplication state, and exempt this attempt from skip_duplicate.
+            fuzz_target = cve_entry.get("fuzz_target", "")
+            if (
+                "fuzzshark_ip" in fuzz_target
+                and consecutive_no_crash >= 3
+                and not format_hint_force_injected
+            ):
+                last_feedback_text = (
+                    "[FORMAT HINT OVERRIDE — fuzzshark_ip]\n"
+                    "CRITICAL: 'oss-fuzzshark: disabling: udp' does NOT block the IP→TCP→RTPS chain.\n"
+                    "The crash (double-free in discovered_tcp_participants) requires TCP, NOT UDP.\n"
+                    "Use IP protocol=6, dest port=7400, TCP flags=0x18 (PSH+ACK).\n"
+                    "TCP payload = 4-byte big-endian length prefix + RTPS message.\n"
+                    "RTPS vendor = 0x01 0x01 (RTI DDS). RTPS version = 0x02 0x04.\n"
+                    "Use little-endian flag (0x01) in all submessage flags.\n"
+                    "writerEntityId = ENTITYID_BUILTIN_PARTICIPANT_WRITER (bytes: 0x00 0x01 0x00 0xc2).\n"
+                    "IP and TCP checksums MUST be valid — compute them, do not zero them.\n\n"
+                ) + last_feedback_text
+                format_hint_force_injected = True
+                # Skip the structural duplicate check this one time to let a
+                # structurally similar-but-endianness-corrected attempt through.
+                recent_fingerprints.clear()
             fingerprint = _structural_fingerprint(poc_code)
             if fingerprint in recent_fingerprints:
                 logger.warning(f"CVE {cve_id}: Attempt {attempt}: Structural near-duplicate detected.")
@@ -474,6 +500,10 @@ def run_agent(
 
         # ── RETRY MEMORY ─────────────────────────────────────────────────────
         # Record this failed approach so the agent doesn't repeat it.
+        if result.status == "no_crash":
+            consecutive_no_crash += 1
+        else:
+            consecutive_no_crash = 0
         if result.status != "crash":
             first_line = last_feedback_text.split("\n")[0].strip()
             approach_summary = (first_line[:80] if first_line else last_feedback_text[:80])
@@ -522,9 +552,10 @@ def run_agent(
             ),
             "verifier_feedback": result.feedback,
             # NEW: capture fuzzer output and command for the Markdown report
+            # AFTER
             "fuzzer_output": (
                 exec_details.get("stderr", "") or exec_details.get("stdout", "")
-            )[:800],
+            )[:4000],
             "fuzzer_cmd": exec_details.get("fuzzer_cmd", ""),
         })
 

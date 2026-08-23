@@ -300,11 +300,22 @@ class FactAccumulator:
                     ]
                     if existing_in_category:
                         old_key, (_, existing_val) = existing_in_category[0]
+                        # Count how many times this category has been contradicted
+                        contradiction_count = self._contradictions.get(f"{category}__count", 0)
+                        contradiction_count += 1
+                        self._contradictions[f"{category}__count"] = contradiction_count
                         self._contradictions[category] = (existing_val, value.strip())
-                        # Delete the old contradictory fact so we don't force the LLM to use it
-                        del self._facts[old_key]
-                        self._facts[key] = (category, value.strip())
-                        continue
+
+                        if contradiction_count >= 2:
+                            # Fact has flip-flopped 2+ times — freeze it.
+                            # Do NOT overwrite; keep the first confirmed value.
+                            # The conflict is already recorded in _contradictions for the LLM to see.
+                            continue
+                        else:
+                            # First contradiction: allow the update (new info may be more correct)
+                            del self._facts[old_key]
+                            self._facts[key] = (category, value.strip())
+                            continue
 
                 # 3. P2: Diagnostic Conclusion Mutual Exclusion
                 # selector_byte and no_selector_byte are mutually exclusive
@@ -341,7 +352,10 @@ class FactAccumulator:
         if self._contradictions:
             lines.append("")
             lines.append("FACT CONFLICTS — resolve by reading the source before writing code:")
-            for category, (old_val, new_val) in self._contradictions.items():
+            for category, value in self._contradictions.items():
+                if category.endswith("__count"):
+                    continue  # skip internal counter keys
+                old_val, new_val = value
                 lines.append(
                     f"  ⚠ [{category}] Prior confirmed: '{old_val}' vs new claim: '{new_val}'. "
                     f"READ the relevant source file to determine which is correct."

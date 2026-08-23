@@ -104,7 +104,8 @@ _ASAN_FRAME_RE = re.compile(
 #   SUMMARY: AddressSanitizer: heap-use-after-free /src/cff/cffparse.c:440:10 in cff_parse_num
 # We keep the sanitizer name and vulnerability class, strip the rest.
 _ASAN_SUMMARY_RE = re.compile(
-    r'^(SUMMARY:\s+\S+:\s+[\w.-]+)\s+/\S+(?:\s+in\s+\S+)?',
+    r'^(\s*SUMMARY:\s*(?:AddressSanitizer|MemorySanitizer|UndefinedBehaviorSanitizer|LeakSanitizer|ThreadSanitizer):\s*[^/\n]+)'
+    r'(?:\s+/.*)?$',
     re.MULTILINE,
 )
 

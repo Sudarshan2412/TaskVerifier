@@ -260,12 +260,18 @@ def _is_low_quality_feedback(text: str) -> bool:
     return False
 
 def discover_fuzz_target_format(cve_entry: dict, image_name: str, fact_acc=None) -> str:
-    """Uses the critic tools to discover the expected input format before attempt 1.
-
-    Returns a structured block with HEADER_FORMAT, STRING_DELIMITER, and
-    FIELD_ORDER — or falls back to the raw discovery text if structuring fails.
-    """
     fuzz_target = cve_entry.get("fuzz_target", "")
+    
+    # If format_hints.py already has a hand-curated hint for this target,
+    # skip auto-discovery entirely — the curated hint is more accurate than
+    # anything the critic LLM will auto-derive, and conflicting blocks
+    # confuse the generator.
+    from agent.format_hints import get_format_hint
+    if fuzz_target and get_format_hint(fuzz_target) is not None:
+        print(f"[PRE-DISCOVERY] ℹ️  Skipping auto-discovery for {fuzz_target} — curated format hint exists.")
+        return ""
+    
+    
     if not fuzz_target:
         import re
         crash_desc = cve_entry.get("crash_description", "")
@@ -521,6 +527,9 @@ def build_feedback(
                 f"Use SEARCH: {fuzz_target} or SEARCH: LLVMFuzzerTestOneInput to find the harness source file immediately.\n"
             )
 
+        if "fuzzshark_ip" in fuzz_target:
+            format_sys_msg = FUZZSHARK_IP_CRITIC_PREAMBLE + format_sys_msg
+
         print("\n[CRITIC] 🧠 Phase 1: Investigating format acceptance with tools...")
         format_analysis = _strip_emergency_preamble(call_critic_llm(format_sys_msg, usr_msg, image_name))
 
@@ -610,3 +619,23 @@ def build_feedback(
         return f"The PoC executed but did not trigger the vulnerability.\nSenior Engineer Analysis:\n{analysis}"
 
     return "Please fix the PoC and try again."
+
+    # In feedback_builder.py, in the critic system message construction:
+FUZZSHARK_IP_CRITIC_PREAMBLE = """
+IMPORTANT DOMAIN KNOWLEDGE FOR fuzzshark_ip:
+- "oss-fuzzshark: disabling: udp" means UDP is disabled as a STANDALONE entry
+  point, but the IP dissector STILL hands UDP payloads to sub-dissectors.
+  The RTPS heuristic dissector registered on UDP IS active via this chain.
+- However, arvo:26952's double-free only fires via dissect_rtps_tcp(), NOT
+  the UDP RTPS path. The crash requires TCP (protocol=6), port 7400.
+- The RTPS-over-TCP framing requires a 4-byte big-endian length prefix before
+  the RTPS magic bytes, per the RTPS-over-TCP specification.
+- IP and TCP checksums ARE validated before sub-dissector handoff. Zero
+  checksums cause silent packet drops — always compute correct checksums.
+- The specific crash path: TCP packet → TCP dissector → RTPS heuristic fires
+  → dissect_rtps_tcp() → inserts participant_info into discovered_tcp_participants
+  (a wmem_map keyed by pinfo source addr) using wmem_packet_scope() memory
+  with g_free as the GHashTable destructor → wmem_leave_packet_scope() fires
+  at end of dissection and frees the same memory a second time.
+"""
+

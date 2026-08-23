@@ -10,13 +10,14 @@ afl-fuzz will run N iterations before re-spawning the process (default: 1000)
 ======================================================
 Reading 2105 bytes from /tmp/poc
 execvp failed, errno = 2 (No such file or directory)
-Magick: "gs" "-q" "-dBATCH" "-dSAFER" "-dMaxBitmap=50000000" "-dNOPAUSE" "-sDEVICE=ppmraw" "-dTextAlphaBits=4" "-dGraphicsAlphaBits=4" "-r72x72" "-g24744x24" "-sOutputFile=/tmp/gmiToRut" "--" "/tmp/gmBsrjl2" "-c" "quit".
+Magick: "gs" "-q" "-dBATCH" "-dSAFER" "-dMaxBitmap=50000000" "-dNOPAUSE" "-sDEVICE=ppmraw" "-dTextAlphaBits=4" "-dGraphicsAlphaBits=4" "-r72x72" "-g24744x24" "-sOutputFile=/tmp/gmfmiLck" "--" "/tmp/gmXSSTAX" "-c" "quit".
 execvp failed, errno = 2 (No such file or directory)
-Magick: "gs" "-q" "-dBATCH" "-dSAFER" "-dMaxBitmap=50000000" "-dNOPAUSE" "-sDEVICE=ppmraw" "-dTextAlphaBits=4" "-dGraphicsAlphaBits=4" "-r72x72" "-g24744x24" "-sOutputFile=/tmp/gmiToRut" "--" "/tmp/gmBsrjl2" "-c" "quit".
-Magick: Postscript delegate failed (/tmp/gmfk6Gqv).
+Magick: "gs" "-q" "-dBATCH" "-dSAFER" "-dMaxBitmap=50000000" "-dNOPAUSE" "-sDEVICE=ppmraw" "-dTextAlphaBits=4" "-dGraphicsAlphaBits=4" "-r72x72" "-g24744x24" "-sOutputFile=/tmp/gmfmiLck" "--" "/tmp/gmXSSTAX" "-c" "quit".
+Magick: Postscript delegate failed (/tmp/gm5UpjuO).
 =================================================================
-==7==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7ffcaaeb7435 at pc 0x00000071d439 bp 0x7ffcaaeb6310 sp 0x7ffcaaeb6308
-WRITE of size 1 at 0x7ffcaaeb7435 thread T0
+==7==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x784179214915 at pc 0x00000071d439 bp 0x7ffe0bcf9330 sp 0x7ffe0bcf9328
+WRITE of size 1 at 0x784179214915 thread T0
+SCARINESS: 46 (1-byte-write-stack-buffer-overflow)
     #0 0x71d438 in TranslateTextEx /src/graphicsmagick/magick/utility.c:6317:15
     #1 0x56e8a3 in AnnotateImage /src/graphicsmagick/magick/annotate.c:219:8
     #2 0x6d2823 in DrawPrimitive /src/graphicsmagick/magick/render.c:5471:15
@@ -28,12 +29,14 @@ WRITE of size 1 at 0x7ffcaaeb7435 thread T0
     #8 0x52ea83 in LLVMFuzzerTestOneInput /src/graphicsmagick/fuzzing/coder_fuzzer.cc:20:15
     #9 0x52f3bf in ExecuteFilesOnyByOne(int, char**) /src/libfuzzer/afl/afl_driver.cpp:301:5
     #10 0x52f96e in main /src/libfuzzer/afl/afl_driver.cpp:339:12
-    #11 0x7d21f759f83f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
+    #11 0x78417816583f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
     #12 0x41ddc8 in _start (/out/coder_MVG_fuzzer+0x41ddc8)
 
-Address 0x7ffcaaeb7435 is located in stack of thread T0 at offset 4373 in frame
+DEDUP_TOKEN: TranslateTextEx--AnnotateImage--DrawPrimitive
+Address 0x784179214915 is located in stack of thread T0 at offset 4373 in frame
     #0 0x71b66f in TranslateTextEx /src/graphicsmagick/magick/utility.c:5877
 
+DEDUP_TOKEN: TranslateTextEx
   This frame has 4 object(s):
     [32, 2085) 'buffer' (line 5878)
     [2224, 2232) 'length' (line 5893)
@@ -43,17 +46,17 @@ HINT: this may be a false positive if your program uses some custom stack unwind
       (longjmp and C++ exceptions *are* supported)
 SUMMARY: AddressSanitizer: stack-buffer-overflow /src/graphicsmagick/magick/utility.c:6317:15 in TranslateTextEx
 Shadow bytes around the buggy address:
-  0x1000155cee30: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x1000155cee40: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x1000155cee50: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x1000155cee60: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x1000155cee70: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-=>0x1000155cee80: 00 00 00 00 00 00[05]f3 f3 f3 f3 f3 f3 f3 f3 f3
-  0x1000155cee90: f3 f3 f3 f3 f3 f3 f3 f3 00 00 00 00 00 00 00 00
-  0x1000155ceea0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x1000155ceeb0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x1000155ceec0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x1000155ceed0: 00 00 00 00 00 00 00 00 f1 f1 f1 f1 00 00 00 00
+  0x0f08af23a8d0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0f08af23a8e0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0f08af23a8f0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0f08af23a900: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0f08af23a910: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x0f08af23a920: 00 00[05]f3 f3 f3 f3 f3 f3 f3 f3 f3 f3 f3 f3 f3
+  0x0f08af23a930: f3 f3 f3 f3 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5
+  0x0f08af23a940: f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5
+  0x0f08af23a950: f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5
+  0x0f08af23a960: f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5
+  0x0f08af23a970: f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5
 Shadow byte legend (one shadow byte represents 8 application bytes):
   Addressable:           00
   Partially addressable: 01 02 03 04 05 06 07 
