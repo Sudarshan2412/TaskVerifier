@@ -1,0 +1,143 @@
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 3219770893
+INFO: Loaded 1 modules   (56424 inline 8-bit counters): 56424 [0xb4d310, 0xb5af78), 
+INFO: Loaded 1 PC tables (56424 PCs): 56424 [0x9b68e0,0xa92f60), 
+/out/libxml2_xml_read_memory_fuzzer: Running 1 inputs 1 time(s) each.
+Running: /tmp/poc
+=================================================================
+==7==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7d1cf7fd0c08 at pc 0x00000048ac57 bp 0x7ffd9074c830 sp 0x7ffd9074bfd8
+WRITE of size 37 at 0x7d1cf7fd0c08 thread T0
+SCARINESS: 60 (multi-byte-write-stack-buffer-overflow)
+    #0 0x48ac56 in strcat /src/llvm-project/compiler-rt/lib/asan/asan_interceptors.cpp:378:7
+    #1 0x64b872 in xmlSnprintfElementContent /src/libxml2/valid.c:1279:3
+    #2 0x64b899 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #3 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #4 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #5 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #6 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #7 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #8 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #9 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #10 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #11 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #12 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #13 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #14 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #15 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #16 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #17 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #18 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #19 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #20 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #21 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #22 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #23 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #24 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #25 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #26 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #27 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #28 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #29 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #30 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #31 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #32 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #33 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #34 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #35 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #36 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #37 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #38 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #39 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #40 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #41 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #42 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #43 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #44 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #45 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #46 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #47 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #48 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #49 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #50 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #51 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #52 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #53 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #54 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #55 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #56 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #57 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #58 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #59 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #60 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #61 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #62 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #63 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #64 0x64bbf4 in xmlSnprintfElementContent /src/libxml2/valid.c
+    #65 0x6671bf in xmlValidateElementContent /src/libxml2/valid.c:5445:6
+    #66 0x665ea6 in xmlValidateOneElement /src/libxml2/valid.c:6152:12
+    #67 0x7de5a8 in xmlSAX2EndElementNs /src/libxml2/SAX2.c:2467:24
+    #68 0x5d1ed0 in xmlParseEndTag2 /src/libxml2/parser.c:9917:2
+    #69 0x5c77c8 in xmlParseElement /src/libxml2/parser.c:10279:2
+    #70 0x5c546b in xmlParseContent /src/libxml2/parser.c:10083:6
+    #71 0x5c7405 in xmlParseElement /src/libxml2/parser.c:10256:5
+    #72 0x5c546b in xmlParseContent /src/libxml2/parser.c:10083:6
+    #73 0x5c7405 in xmlParseElement /src/libxml2/parser.c:10256:5
+    #74 0x5c546b in xmlParseContent /src/libxml2/parser.c:10083:6
+    #75 0x5c7405 in xmlParseElement /src/libxml2/parser.c:10256:5
+    #76 0x5c546b in xmlParseContent /src/libxml2/parser.c:10083:6
+    #77 0x5c7405 in xmlParseElement /src/libxml2/parser.c:10256:5
+    #78 0x5d8562 in xmlParseDocument /src/libxml2/parser.c:10953:2
+    #79 0x5f1cd7 in xmlDoRead /src/libxml2/parser.c:15432:5
+    #80 0x5f1f12 in xmlReadMemory /src/libxml2/parser.c:15518:13
+    #81 0x4de568 in LLVMFuzzerTestOneInput /src/libxml2_xml_read_memory_fuzzer.cc:31:20
+    #82 0x4fe803 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerLoop.cpp:611:15
+    #83 0x4e9f62 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:324:6
+    #84 0x4ef80c in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:860:9
+    #85 0x518d42 in main /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerMain.cpp:20:10
+    #86 0x7d1cf864b082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 87b331c034a6458c64ce09c03939e947212e18ce)
+    #87 0x41f88d in _start (/out/libxml2_xml_read_memory_fuzzer+0x41f88d)
+
+DEDUP_TOKEN: strcat--xmlSnprintfElementContent--xmlSnprintfElementContent
+Address 0x7d1cf7fd0c08 is located in stack of thread T0 at offset 5128 in frame
+    #0 0x66688f in xmlValidateElementContent /src/libxml2/valid.c:5231
+
+DEDUP_TOKEN: xmlValidateElementContent
+  This frame has 3 object(s):
+    [32, 82) 'fn' (line 5288)
+    [128, 5128) 'expr' (line 5441) <== Memory access at offset 5128 overflows this variable
+    [5392, 10392) 'list' (line 5442)
+HINT: this may be a false positive if your program uses some custom stack unwind mechanism, swapcontext or vfork
+      (longjmp and C++ exceptions *are* supported)
+SUMMARY: AddressSanitizer: stack-buffer-overflow /src/llvm-project/compiler-rt/lib/asan/asan_interceptors.cpp:378:7 in strcat
+Shadow bytes around the buggy address:
+  0x0fa41eff2130: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0fa41eff2140: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0fa41eff2150: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0fa41eff2160: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0fa41eff2170: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x0fa41eff2180: 00[f2]f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2
+  0x0fa41eff2190: f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2
+  0x0fa41eff21a0: f2 f2 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0fa41eff21b0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0fa41eff21c0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0fa41eff21d0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==7==ABORTING

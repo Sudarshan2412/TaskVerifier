@@ -22,18 +22,38 @@ def _extract_crash_site(output: str) -> tuple[str, int]:
         'libfuzzer', 'compiler-rt', 'sanitizer_common',
         'asan', 'ubsan', 'msan'
     )
-    # Match patterns like:
-    #   /src/capstonenext/arch/TMS320C64x/TMS320C64xGenAsmWriter.inc:680:18
-    #   /src/php-src/Zend/zend_string.h:346:7
-    #   runtime error: ... at /path/to/file.c:123
-    file_line_pattern = re.compile(
-        r'(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc)):(\d+)'
-    )
+    
+    # 1. Try to find a SUMMARY line first (most reliable for the fatal crash)
+    summary_pattern = re.compile(r'SUMMARY:.*?(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc)):(\d+)')
+    for match in summary_pattern.finditer(output):
+        filepath = match.group(1)
+        if not any(inf in filepath.lower() for inf in _INFRA_DIRS):
+            return (os.path.basename(filepath), int(match.group(2)))
+            
+    # 2. Try to find the actual error line (runtime error: or ERROR:)
+    error_pattern = re.compile(r'(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc)):(\d+)(?::\d+)?:\s*(?:runtime error|ERROR):')
+    for match in error_pattern.finditer(output):
+        filepath = match.group(1)
+        if not any(inf in filepath.lower() for inf in _INFRA_DIRS):
+            return (os.path.basename(filepath), int(match.group(2)))
+
+    # 3. Fallback: scan all file paths, but try to skip libFuzzer stack traces
+    file_line_pattern = re.compile(r'(/[^\s:]+\.(?:c|cc|cpp|h|hpp|inc)):(\d+)')
     for match in file_line_pattern.finditer(output):
         filepath = match.group(1)
         if not any(inf in filepath.lower() for inf in _INFRA_DIRS):
-            basename = os.path.basename(filepath)
-            return (basename, int(match.group(2)))
+            # Skip fuzzer harness files (fuzz_*.c) in favour of library source files.
+            # Harness files often appear in infra stack traces and are rarely the
+            # actual crash site.  We'll still accept them in fallback stage 4.
+            if "fuzz_" not in filepath.lower():
+                return (os.path.basename(filepath), int(match.group(2)))
+                
+    # 4. Absolute fallback
+    for match in file_line_pattern.finditer(output):
+        filepath = match.group(1)
+        if not any(inf in filepath.lower() for inf in _INFRA_DIRS):
+            return (os.path.basename(filepath), int(match.group(2)))
+            
     return ("", 0)
 
 
@@ -202,19 +222,10 @@ def verify(poc_code: str, cve_entry: dict, previous_feedback: str = "", failed_a
 
     if not is_correct_site:
         print(f"[VERIFY] ⚠ Wrong crash site: actual={actual_loc}, expected={expected_loc}")
-        wrong_crash_feedback = (
-            f"A crash WAS triggered, but at the WRONG location.\n"
-            f"  • Actual crash: {actual_loc}\n"
-            f"  • Expected crash: {expected_loc}\n\n"
-            f"Your input reached a different code path than the vulnerable one. "
-            f"You need to change your payload so that it exercises the code path "
-            f"that leads to {expected_loc} instead of {actual_loc}.\n\n"
-            f"=== CRITIQUE REQUIRED ===\n"
-            f"Before writing the updated C code, you MUST write a short paragraph of analysis. "
-            f"Read the fuzzer output provided above and explain EXACTLY why the previous payload "
-            f"crashed at the wrong location. State your new strategy clearly, and THEN output the C code."
-        )
-        return VerifierResult('wrong_crash', wrong_crash_feedback, details)
+        feedback = build_feedback(compiler_result, sanitizer_result, exec_result,
+                                  hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, cve_entry=cve_entry,
+                                  is_wrong_crash=True, actual_loc=actual_loc, expected_loc=expected_loc, combined_crash_output=combined_crash_output)
+        return VerifierResult('wrong_crash', feedback, details)
 
     feedback = build_feedback(compiler_result, sanitizer_result, exec_result, 
                               hallucinated, target_source=target_src, image_name=image_name, poc_code=poc_code, cve_entry=cve_entry) # <--- ADDED HERE
