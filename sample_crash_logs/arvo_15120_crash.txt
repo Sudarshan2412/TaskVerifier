@@ -1,0 +1,23 @@
+INFO: Seed: 3113281206
+INFO: Loaded 1 modules   (10031 guards): 10031 [0x23c91c0, 0x23d2e7c), 
+/out/libarchive_fuzzer: Running 1 inputs 1 time(s) each.
+Running: /tmp/poc
+UndefinedBehaviorSanitizer:DEADLYSIGNAL
+==7==ERROR: UndefinedBehaviorSanitizer: SEGV on unknown address 0x77aef724f008 (pc 0x0000004bf747 bp 0x7ffd4db4d8c0 sp 0x7ffd4db4cf60 T7)
+==7==The signal is caused by a READ memory access.
+    #0 0x4bf746 in Ppmd7_DecodeSymbol /src/libarchive/libarchive/archive_ppmd7.c:865:10
+    #1 0x4893a0 in read_data_compressed /src/libarchive/libarchive/archive_read_support_format_rar.c:1928:18
+    #2 0x486663 in archive_read_format_rar_read_data /src/libarchive/libarchive/archive_read_support_format_rar.c:1025:11
+    #3 0x459160 in archive_read_data /src/libarchive/libarchive/archive_read.c:842:8
+    #4 0x42f2ec in LLVMFuzzerTestOneInput /src/libarchive_fuzzer.cc:49:17
+    #5 0x43b794 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/libfuzzer/FuzzerLoop.cpp:465:13
+    #6 0x42fa7c in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/libfuzzer/FuzzerDriver.cpp:273:6
+    #7 0x433959 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/libfuzzer/FuzzerDriver.cpp:689:9
+    #8 0x42f788 in main /src/libfuzzer/FuzzerMain.cpp:20:10
+    #9 0x77aef98f783f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
+    #10 0x4083a8 in _start (/out/libarchive_fuzzer+0x4083a8)
+
+DEDUP_TOKEN: Ppmd7_DecodeSymbol--read_data_compressed--archive_read_format_rar_read_data
+UndefinedBehaviorSanitizer can not provide additional info.
+SUMMARY: UndefinedBehaviorSanitizer: SEGV /src/libarchive/libarchive/archive_ppmd7.c:865:10 in Ppmd7_DecodeSymbol
+==7==ABORTING

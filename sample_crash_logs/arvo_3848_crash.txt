@@ -1,0 +1,73 @@
+INFO: Seed: 2354367400
+INFO: Loaded 1 modules   (6096 guards): 6096 [0x965580, 0x96b4c0), 
+/out/pe_fuzzer: Running 1 inputs 1 time(s) each.
+Running: /tmp/poc
+=================================================================
+==7==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x61d000001224 at pc 0x00000054cc89 bp 0x7ffcbead6680 sp 0x7ffcbead6678
+READ of size 1 at 0x61d000001224 thread T0
+SCARINESS: 12 (1-byte-read-heap-buffer-overflow)
+    #0 0x54cc88 in wide_string_fits_in_pe /src/yara/libyara/modules/pe.c:126:9
+    #1 0x54e901 in pe_parse_version_info /src/yara/libyara/modules/pe.c:552:15
+    #2 0x54f198 in pe_collect_resources /src/yara/libyara/modules/pe.c:660:5
+    #3 0x54da2f in _pe_iterate_resources /src/yara/libyara/modules/pe.c:383:13
+    #4 0x54d953 in _pe_iterate_resources /src/yara/libyara/modules/pe.c:357:18
+    #5 0x54d953 in _pe_iterate_resources /src/yara/libyara/modules/pe.c:357:18
+    #6 0x54dff4 in pe_iterate_resources /src/yara/libyara/modules/pe.c:454:7
+    #7 0x5516b4 in pe_parse_header /src/yara/libyara/modules/pe.c:1369:3
+    #8 0x55aa75 in pe__load /src/yara/libyara/modules/pe.c:2612:9
+    #9 0x52a0a2 in yr_modules_load /src/yara/libyara/modules.c:175:16
+    #10 0x587e30 in yr_execute_code /src/yara/libyara/exec.c:859:18
+    #11 0x543b18 in yr_rules_scan_mem_blocks /src/yara/libyara/rules.c:472:3
+    #12 0x544d5b in yr_rules_scan_mem /src/yara/libyara/rules.c:586:10
+    #13 0x51a1ba in LLVMFuzzerTestOneInput /src/yara/tests/oss-fuzz/pe_fuzzer.cc:85:3
+    #14 0x5cf420 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/libfuzzer/FuzzerLoop.cpp:471:13
+    #15 0x5ae965 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/libfuzzer/FuzzerDriver.cpp:273:6
+    #16 0x5ba035 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/libfuzzer/FuzzerDriver.cpp:690:9
+    #17 0x5ae008 in main /src/libfuzzer/FuzzerMain.cpp:20:10
+    #18 0x70ee8946783f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
+    #19 0x41c558 in _start (/out/pe_fuzzer+0x41c558)
+
+DEDUP_TOKEN: wide_string_fits_in_pe--pe_parse_version_info--pe_collect_resources
+0x61d000001224 is located 2 bytes to the right of 1954-byte region [0x61d000000a80,0x61d000001222)
+allocated by thread T0 here:
+    #0 0x515e28 in operator new[](unsigned long) /src/llvm/projects/compiler-rt/lib/asan/asan_new_delete.cc:95
+    #1 0x5cf208 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/libfuzzer/FuzzerLoop.cpp:462:23
+    #2 0x5ae965 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/libfuzzer/FuzzerDriver.cpp:273:6
+    #3 0x5ba035 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/libfuzzer/FuzzerDriver.cpp:690:9
+    #4 0x5ae008 in main /src/libfuzzer/FuzzerMain.cpp:20:10
+    #5 0x70ee8946783f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
+
+DEDUP_TOKEN: operator new[](unsigned long)--fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long)--fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long)
+SUMMARY: AddressSanitizer: heap-buffer-overflow /src/yara/libyara/modules/pe.c:126:9 in wide_string_fits_in_pe
+Shadow bytes around the buggy address:
+  0x0c3a7fff81f0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c3a7fff8200: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c3a7fff8210: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c3a7fff8220: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c3a7fff8230: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x0c3a7fff8240: 00 00 00 00[02]fa fa fa fa fa fa fa fa fa fa fa
+  0x0c3a7fff8250: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c3a7fff8260: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c3a7fff8270: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c3a7fff8280: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c3a7fff8290: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==7==ABORTING
