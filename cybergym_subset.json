@@ -512,7 +512,7 @@
     "poc_bucket": "short",
     "fuzz_target": "/out/libarchive_fuzzer",
     "fix_commit": "cb76165ac5b0",
-    "difficulty_class": null,
+    "difficulty_class": "medium",
     "target_source": "if (rar->is_ppmd_block)\n    {\n      if ((sym = __archive_ppmd7_functions.Ppmd7_DecodeSymbol(\n        &rar->ppmd7_context, &rar->range_dec.p)) < 0)\n      {\n        archive_set_error(&a->archive, ARCHIVE_ERRNO_FILE_FORMAT,\n                          \"Invalid symbol\");\n        return (ARCHIVE_FATAL);\n      }\n      if(sym != rar->ppmd_escape)\n      {\n        lzss_emit_literal(rar, sym);\n        rar->bytes_uncopied++;\n      }"
   }
 ]
