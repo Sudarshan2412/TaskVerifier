@@ -1,4 +1,11 @@
-INFO: Seed: 1051335475
+# --- repro environment -------------------------------------
+# image:            n132/arvo:12957-vul
+# image_id:         sha256:9538c6e58e28df6d70253c372107789b0803957b3ce5dc568765e67e7103f57a
+# host_kernel:      Linux 6.8.0-1052-azure x86_64
+# aslr_setting:     2
+# docker_version:   29.3.0-1
+# --------------------------------------------------------------
+INFO: Seed: 3254260789
 INFO: Loaded 1 modules   (29269 inline 8-bit counters): 29269 [0xc3bb10, 0xc42d65), 
 INFO: Loaded 1 PC tables (29269 PCs): 29269 [0x8ebfc0,0x95e510), 
 /out/fuzz_disasmnext: Running 1 inputs 1 time(s) each.
@@ -13,7 +20,7 @@ Running: /tmp/poc
     #6 0x575f42 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/libfuzzer/FuzzerDriver.cpp:283:6
     #7 0x57996b in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/libfuzzer/FuzzerDriver.cpp:684:9
     #8 0x575cc8 in main /src/libfuzzer/FuzzerMain.cpp:19:10
-    #9 0x7551f607f83f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
+    #9 0x75a9211f383f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
     #10 0x405e88 in _start (/out/fuzz_disasmnext+0x405e88)
 
 DEDUP_TOKEN: getRegisterName--printMemOperand--printInstruction

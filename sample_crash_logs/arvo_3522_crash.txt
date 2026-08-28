@@ -1,9 +1,16 @@
-INFO: Seed: 715725427
+# --- repro environment -------------------------------------
+# image:            n132/arvo:3522-vul
+# image_id:         sha256:12ec89d95ae0e480fc53e606150ca76ccafacf086fbe4e39d6fdc42fbe2beae5
+# host_kernel:      Linux 6.8.0-1052-azure x86_64
+# aslr_setting:     2
+# docker_version:   29.3.0-1
+# --------------------------------------------------------------
+INFO: Seed: 4054180616
 INFO: Loaded 1 modules   (3932 guards): 3932 [0x911b80, 0x9158f0), 
 /out/block_round_trip: Running 1 inputs 1 time(s) each.
 Running: /tmp/poc
 =================================================================
-==7==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x62a000005ae8 at pc 0x0000004dd485 bp 0x7ffec16491e0 sp 0x7ffec1648990
+==7==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x62a000005ae8 at pc 0x0000004dd485 bp 0x7ffcc3ad37a0 sp 0x7ffcc3ad2f50
 WRITE of size 1025 at 0x62a000005ae8 thread T0
 SCARINESS: 45 (multi-byte-write-heap-buffer-overflow)
     #0 0x4dd484 in __asan_memcpy /src/llvm/projects/compiler-rt/lib/asan/asan_interceptors_memintrinsics.cc:23
@@ -17,7 +24,7 @@ SCARINESS: 45 (multi-byte-write-heap-buffer-overflow)
     #8 0x58b335 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/libfuzzer/FuzzerDriver.cpp:273:6
     #9 0x596650 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/libfuzzer/FuzzerDriver.cpp:687:9
     #10 0x58a9d8 in main /src/libfuzzer/FuzzerMain.cpp:20:10
-    #11 0x743df1d0083f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
+    #11 0x7a2d7f5f983f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
     #12 0x41bff8 in _start (/out/block_round_trip+0x41bff8)
 
 DEDUP_TOKEN: __asan_memcpy--ZSTD_storeLastLiterals--ZSTD_compressBlock_internal
@@ -35,7 +42,7 @@ allocated by thread T0 here:
     #9 0x58b335 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/libfuzzer/FuzzerDriver.cpp:273:6
     #10 0x596650 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/libfuzzer/FuzzerDriver.cpp:687:9
     #11 0x58a9d8 in main /src/libfuzzer/FuzzerMain.cpp:20:10
-    #12 0x743df1d0083f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
+    #12 0x7a2d7f5f983f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
 
 DEDUP_TOKEN: malloc--ZSTD_malloc--ZSTD_resetCCtx_internal
 SUMMARY: AddressSanitizer: heap-buffer-overflow /src/llvm/projects/compiler-rt/lib/asan/asan_interceptors_memintrinsics.cc:23 in __asan_memcpy

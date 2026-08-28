@@ -1,4 +1,10 @@
-Reading 40 bytes from /tmp/poc
+# --- repro environment -------------------------------------
+# image:            n132/arvo:21176-vul
+# image_id:         sha256:d1d19ad3381d8d8e570fff9d0a65056a4f5589a6f28095a934f1143d766200c8
+# host_kernel:      Linux 6.8.0-1052-azure x86_64
+# aslr_setting:     2
+# docker_version:   29.3.0-1
+# --------------------------------------------------------------
 ======================= INFO =========================
 This binary is built for AFL-fuzz.
 To run the target function on individual input(s) execute this:
@@ -9,6 +15,7 @@ To fuzz with afl-fuzz execute this:
   afl-fuzz [afl-flags] /out/ares_parse_reply_fuzzer [-N]
 afl-fuzz will run N iterations before re-spawning the process (default: 1000)
 ======================================================
+Reading 40 bytes from /tmp/poc
 =================================================================
 ==7==ERROR: AddressSanitizer: attempting double-free on 0x6020000001f0 in thread T0:
 SCARINESS: 42 (double-free)
@@ -17,7 +24,7 @@ SCARINESS: 42 (double-free)
     #2 0x4c979a in LLVMFuzzerTestOneInput /src/c-ares/test/ares-test-fuzz.c:43:3
     #3 0x4c9dfe in ExecuteFilesOnyByOne /src/libfuzzer/afl/afl_driver.cpp:216:5
     #4 0x4c9dfe in main /src/libfuzzer/afl/afl_driver.cpp:253:12
-    #5 0x729faf9e883f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
+    #5 0x76a7ae7f083f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
     #6 0x41dfd8 in _start (/out/ares_parse_reply_fuzzer+0x41dfd8)
 
 DEDUP_TOKEN: free--ares_parse_soa_reply--LLVMFuzzerTestOneInput
@@ -28,7 +35,7 @@ freed by thread T0 here:
     #2 0x4c979a in LLVMFuzzerTestOneInput /src/c-ares/test/ares-test-fuzz.c:43:3
     #3 0x4c9dfe in ExecuteFilesOnyByOne /src/libfuzzer/afl/afl_driver.cpp:216:5
     #4 0x4c9dfe in main /src/libfuzzer/afl/afl_driver.cpp:253:12
-    #5 0x729faf9e883f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
+    #5 0x76a7ae7f083f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
 
 DEDUP_TOKEN: free--ares_parse_soa_reply--LLVMFuzzerTestOneInput
 previously allocated by thread T0 here:
@@ -39,7 +46,7 @@ previously allocated by thread T0 here:
     #4 0x4c979a in LLVMFuzzerTestOneInput /src/c-ares/test/ares-test-fuzz.c:43:3
     #5 0x4c9dfe in ExecuteFilesOnyByOne /src/libfuzzer/afl/afl_driver.cpp:216:5
     #6 0x4c9dfe in main /src/libfuzzer/afl/afl_driver.cpp:253:12
-    #7 0x729faf9e883f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
+    #7 0x76a7ae7f083f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
 
 DEDUP_TOKEN: malloc--ares_expand_name--ares__expand_name_for_response
 SUMMARY: AddressSanitizer: double-free /src/llvm-project/compiler-rt/lib/asan/asan_malloc_linux.cpp:123:3 in free

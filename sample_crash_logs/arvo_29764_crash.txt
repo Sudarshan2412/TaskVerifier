@@ -1,7 +1,14 @@
+# --- repro environment -------------------------------------
+# image:            n132/arvo:29764-vul
+# image_id:         sha256:1501cc6c506cd020b475c1533e4f56c4e1106c0d891aa3144653d36bc22c8d1b
+# host_kernel:      Linux 6.8.0-1052-azure x86_64
+# aslr_setting:     2
+# docker_version:   29.3.0-1
+# --------------------------------------------------------------
 Accepting input from '/tmp/poc'
 Usage for fuzzing: honggfuzz -P [flags] -- /out/ssh2_client_fuzzer
 =================================================================
-==7==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x6150000004ff at pc 0x000000433154 bp 0x7ffc7a120dd0 sp 0x7ffc7a120590
+==7==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x6150000004ff at pc 0x000000433154 bp 0x7ffd4ad204f0 sp 0x7ffd4ad1fcb0
 READ of size 148 at 0x6150000004ff thread T0
 SCARINESS: 26 (multi-byte-read-heap-buffer-overflow)
     #0 0x433153 in strchr /src/llvm-project/compiler-rt/lib/asan/../sanitizer_common/sanitizer_common_interceptors.inc:691:5
@@ -13,7 +20,7 @@ SCARINESS: 26 (multi-byte-read-heap-buffer-overflow)
     #6 0x4cf5a4 in libssh2_session_handshake /src/libssh2/src/session.c:827:5
     #7 0x4cd40b in LLVMFuzzerTestOneInput /src/libssh2/tests/ossfuzz/ssh2_client_fuzzer.cc:61:6
     #8 0x55ebbb in main (/out/ssh2_client_fuzzer+0x55ebbb)
-    #9 0x7f464704283f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
+    #9 0x71a5efe2483f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
     #10 0x41e6a8 in _start (/out/ssh2_client_fuzzer+0x41e6a8)
 
 DEDUP_TOKEN: strchr--kex_agree_instr--kex_agree_comp

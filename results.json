@@ -1,0 +1,16 @@
+[
+  {
+    "cve_id": "arvo:66679",
+    "target_source": "int\nxmlAddIDSafe(xmlDocPtr doc, const xmlChar *value, xmlAttrPtr attr,\n             int streaming, xmlIDPtr *id) {\n    xmlIDPtr ret;\n    xmlIDTablePtr table;\n\n    if (id != NULL)\n        *id = NULL;\n\n    if (doc == NULL) {\n\treturn(-1);\n    }\n    if ((value == NULL) || (value[0] == 0)) {\n\treturn(0);\n    }\n    if (attr == NULL) {\n\treturn(-1);\n    }\n\n    /*\n     * Create the ID table if needed.\n     */\n    table = (xmlIDTablePtr) doc->ids;\n    if (table == NULL)  {\n        doc->ids = table = xmlHashCreateDict(0, doc->dict);\n        if (table == NULL)\n            return(-1);\n    } else {\n        ret = xmlHashLookup(table, value);\n        if (ret != NULL) {\n            /*\n             * Update the attribute to make entities work.\n             */\n            if (!streaming) {\n                if (ret->attr != NULL) {\n                    ret->attr->id = NULL;\n                    ret->attr = attr;\n                }\n                attr->id = ret;\n            }\n\t    attr->atype = XML_ATTRIBUTE_ID;\n            return(0);\n        }\n    }\n\n    ret = (xmlIDPtr) xmlMalloc(sizeof(xmlID));\n    if (ret == NULL)\n\treturn(-1);\n    memset(ret, 0, sizeof(*ret));\n\n    /*\n     * fill the structure.\n     */\n    ret->doc = doc;\n    ret->value = xmlStrdup(value);\n    if (ret->value == NULL) {\n        xmlFreeID(ret);\n        return(-1);\n    }\n    if (streaming) {\n\t/*\n\t * Operating in streaming mode, attr is gonna disappear\n\t */\n\tif (doc->dict != NULL)\n\t    ret->name = xmlDictLookup(doc->dict, attr->name, -1);\n\telse\n\t    ret->name = xmlStrdup(attr->name);\n        if (ret->name == NULL) {\n            xmlFreeID(ret);\n            return(-1);\n        }\n\tret->attr = NULL;\n    } else {\n\tret->attr = attr;\n\tret->name = NULL;\n    }\n    ret->lineno = xmlGetLineNo(attr->parent);\n\n    if (xmlHashAddEntry(table, value, ret) < 0) {\n\txmlFreeID(ret);\n\treturn(-1);\n    }\n\n    attr->atype = XML_ATTRIBUTE_ID;\n    if (!streaming)\n        attr->id = ret;\n\n    if (id != NULL)\n        *id = ret;\n    return(1);\n}",
+    "extraction_method": "patch_line_lookup",
+    "poc_bucket": "short",
+    "_crash_funcs": [
+      "xmlRemoveID",
+      "xmlFreeProp",
+      "xmlFreeNode"
+    ],
+    "_patch_files": [
+      "valid.c"
+    ]
+  }
+]
