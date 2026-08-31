@@ -19,15 +19,24 @@ class ContextManager:
     token budget constraints with intelligent truncation.
     """
 
-    def __init__(self, max_tokens: int = 800_000):
+    def __init__(self, max_tokens: int = 800_000, mode: str = "single_shot"):
         """
         Initialize the context manager for a new trial.
         
         Args:
             max_tokens: Maximum token budget (default 800K).
+            mode: "single_shot" (default, existing behavior, unchanged) or
+                  "tool_use" -- selects which compression strategy
+                  _truncate_if_needed() uses. Tool-use transcripts are
+                  shaped very differently (many small tool-call/observation
+                  turns per attempt instead of one user/assistant pair per
+                  attempt), so they need a different compression strategy,
+                  not just a bigger keep_count on the existing one -- see
+                  _truncate_if_needed()'s docstring.
         """
         self.history: list[dict] = []
         self.max_tokens: int = max_tokens
+        self.mode = mode
         try:
             # pyrefly: ignore [missing-import]
             import tiktoken
@@ -128,11 +137,42 @@ class ContextManager:
     def _truncate_if_needed(self) -> None:
         """
         Apply truncation ONLY if context exceeds 70% of the budget.
-        
+
+        Dispatches to one of two strategies based on self.mode:
+
+        single_shot (existing, unchanged):
         1. Keep first message (CVE description + target source)
         2. Keep the last 2 complete attempts (4 to 6 messages) in full detail.
         3. Compress older assistant responses to just a marker.
-        4. Compress older user feedback to just the attempt number and first paragraph of analysis.
+        4. Compress older user feedback to just the attempt number and first
+           paragraph of analysis.
+
+        tool_use (new -- see CHANGE note below for why this had to be a
+        different strategy, not just a parameter tweak on the above):
+        1. Keep first message (the tool-mode initial prompt).
+        2. Keep the last 10 messages (a handful of recent tool-call/
+           observation turns) in full detail -- more than single_shot's
+           "last 2 attempts" because tool-use turns are individually much
+           smaller (one command + one observation) than a full attempt
+           (a whole generated PoC plus full verifier feedback), so more of
+           them fit in the same budget share.
+        3. Compress older assistant turns to just which tool was called
+           (not the full command/code), and older observations to just
+           their one-line `[toolname ...]` header (the observation-
+           formatting functions in agent/tools.py already put a compact
+           summary there, e.g. `[run_bash exit_code=1]` or
+           `[read_file /src/foo.c]` -- reusing that instead of writing a
+           second, separate summarization pass is why the compressed
+           observation lines below are one regex, not new logic).
+
+        CHANGE NOTE: the existing single_shot regexes below (matching
+        "Your previous attempt (Attempt N) failed:" and "Senior Engineer
+        Analysis:") are specific to build_feedback_prompt()'s exact text --
+        they will simply never match a tool-call/observation transcript,
+        which has neither of those phrases anywhere in it. Checked this
+        directly rather than assuming it would "just work" for tool-use
+        transcripts too -- confirmed it wouldn't, hence the separate branch
+        below instead of trying to generalize the existing regexes.
         """
         import re
         current_tokens = self.token_estimate()
@@ -147,6 +187,36 @@ class ContextManager:
             return
         
         first_message = self.history[0]
+
+        if self.mode == "tool_use":
+            keep_count = min(10, len(self.history) - 1)
+            last_n = self.history[-keep_count:]
+            middle = self.history[1:-keep_count]
+
+            compressed = 0
+            for msg in middle:
+                if msg["role"] == "assistant":
+                    if "[Earlier tool call — compressed]" not in msg["content"] and \
+                       "[Earlier turn — compressed]" not in msg["content"]:
+                        tool_match = re.search(r'TOOL_CALL:\s*(\w+)', msg["content"])
+                        if tool_match:
+                            msg["content"] = f"[Earlier tool call — compressed] TOOL_CALL: {tool_match.group(1)}"
+                        else:
+                            msg["content"] = "[Earlier turn — compressed]"
+                        compressed += 1
+                elif msg["role"] == "user":
+                    if "[Earlier observation — compressed]" not in msg["content"]:
+                        header_match = re.match(r'^\[[a-z_]+[^\]]*\]', msg["content"])
+                        header = header_match.group(0) if header_match else "[observation]"
+                        msg["content"] = f"[Earlier observation — compressed] {header}"
+                        compressed += 1
+
+            self.history = [first_message] + middle + last_n
+            if compressed:
+                logger.warning(f"Compressed {compressed} older tool-use turns to fit context budget")
+            return
+
+        # ── single_shot (existing, unchanged) ───────────────────────────────
         # Keep last 2 attempts in full detail (roughly 4-6 messages depending on current turn state)
         keep_count = min(6, len(self.history) - 1)
         last_n = self.history[-keep_count:]

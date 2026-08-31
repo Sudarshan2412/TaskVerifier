@@ -1,12 +1,19 @@
+# --- repro environment -------------------------------------
+# image:            n132/arvo:1972-vul
+# image_id:         sha256:7b725b749870803ad744728cef15b9c164d627ff8036b9f2467b46549aa36e53
+# host_kernel:      Linux 6.8.0-1052-azure x86_64
+# aslr_setting:     2
+# docker_version:   29.3.0-1
+# --------------------------------------------------------------
 INFO: Running with entropic power schedule (0xFF, 100).
-INFO: Seed: 3219770893
+INFO: Seed: 2530523488
 INFO: Loaded 1 modules   (56424 inline 8-bit counters): 56424 [0xb4d310, 0xb5af78), 
 INFO: Loaded 1 PC tables (56424 PCs): 56424 [0x9b68e0,0xa92f60), 
 /out/libxml2_xml_read_memory_fuzzer: Running 1 inputs 1 time(s) each.
 Running: /tmp/poc
 =================================================================
-==7==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7d1cf7fd0c08 at pc 0x00000048ac57 bp 0x7ffd9074c830 sp 0x7ffd9074bfd8
-WRITE of size 37 at 0x7d1cf7fd0c08 thread T0
+==7==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x77da36dddc08 at pc 0x00000048ac57 bp 0x7ffe1cf110b0 sp 0x7ffe1cf10858
+WRITE of size 37 at 0x77da36dddc08 thread T0
 SCARINESS: 60 (multi-byte-write-stack-buffer-overflow)
     #0 0x48ac56 in strcat /src/llvm-project/compiler-rt/lib/asan/asan_interceptors.cpp:378:7
     #1 0x64b872 in xmlSnprintfElementContent /src/libxml2/valid.c:1279:3
@@ -94,11 +101,11 @@ SCARINESS: 60 (multi-byte-write-stack-buffer-overflow)
     #83 0x4e9f62 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:324:6
     #84 0x4ef80c in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:860:9
     #85 0x518d42 in main /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerMain.cpp:20:10
-    #86 0x7d1cf864b082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 87b331c034a6458c64ce09c03939e947212e18ce)
+    #86 0x77da372e3082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 87b331c034a6458c64ce09c03939e947212e18ce)
     #87 0x41f88d in _start (/out/libxml2_xml_read_memory_fuzzer+0x41f88d)
 
 DEDUP_TOKEN: strcat--xmlSnprintfElementContent--xmlSnprintfElementContent
-Address 0x7d1cf7fd0c08 is located in stack of thread T0 at offset 5128 in frame
+Address 0x77da36dddc08 is located in stack of thread T0 at offset 5128 in frame
     #0 0x66688f in xmlValidateElementContent /src/libxml2/valid.c:5231
 
 DEDUP_TOKEN: xmlValidateElementContent
@@ -110,17 +117,17 @@ HINT: this may be a false positive if your program uses some custom stack unwind
       (longjmp and C++ exceptions *are* supported)
 SUMMARY: AddressSanitizer: stack-buffer-overflow /src/llvm-project/compiler-rt/lib/asan/asan_interceptors.cpp:378:7 in strcat
 Shadow bytes around the buggy address:
-  0x0fa41eff2130: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x0fa41eff2140: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x0fa41eff2150: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x0fa41eff2160: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x0fa41eff2170: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-=>0x0fa41eff2180: 00[f2]f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2
-  0x0fa41eff2190: f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2
-  0x0fa41eff21a0: f2 f2 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x0fa41eff21b0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x0fa41eff21c0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x0fa41eff21d0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0efbc6db3b30: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0efbc6db3b40: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0efbc6db3b50: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0efbc6db3b60: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0efbc6db3b70: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x0efbc6db3b80: 00[f2]f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2
+  0x0efbc6db3b90: f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f2
+  0x0efbc6db3ba0: f2 f2 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0efbc6db3bb0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0efbc6db3bc0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0efbc6db3bd0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 Shadow byte legend (one shadow byte represents 8 application bytes):
   Addressable:           00
   Partially addressable: 01 02 03 04 05 06 07 

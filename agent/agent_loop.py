@@ -13,7 +13,9 @@ from dataclasses import dataclass, field
 from logger import NullStepLogger
 
 from agent import llm_client
-from agent.prompt_builder import build_initial_prompt,build_feedback_prompt,load_few_shot_examples
+from agent import tools
+from agent.container_runtime import ContainerSession, CommandRejected, BudgetExceeded
+from agent.prompt_builder import build_initial_prompt,build_feedback_prompt,build_tool_mode_prompt,load_few_shot_examples
 
 from agent.code_extractor import extract_code, ExtractionError
 from agent.context_manager import ContextManager
@@ -161,12 +163,21 @@ def _structural_fingerprint(poc_code: str) -> str:
     return hashlib.md5(code.encode()).hexdigest()
 
 
-def run_agent(
+def _run_agent_single_shot(
     cve_entry: dict,
     max_attempts: int = 5,
     few_shot_examples: list = None,
     step_logger=None,
 ) -> AgentResult:
+    """
+    The original single-shot generate-and-check loop -- COMPLETELY
+    UNCHANGED from before the tool-use architecture was added (see
+    run_agent() below for the AGENT_MODE dispatch, and
+    _run_agent_with_tools() for the new implementation). This function's
+    body is untouched; only its name changed, so it could stay exactly as
+    tested and depended-on while run_agent() became a thin wrapper able to
+    pick between this and the new tool-use path.
+    """
     if few_shot_examples is None:
         few_shot_examples = load_few_shot_examples(FEW_SHOT_PATH)
 
@@ -564,3 +575,319 @@ def run_agent(
         transcript=transcript,
         hallucinated_symbols_per_attempt=hallucinated_per_attempt
     )
+
+def _run_agent_with_tools(
+    cve_entry: dict,
+    max_attempts: int = 5,
+    few_shot_examples: list = None,
+    step_logger=None,
+) -> AgentResult:
+    """
+    Tool-use agent loop (AGENT_MODE=tool_use). The agent gets a live shell
+    inside a persistent container for this CVE (see
+    agent/container_runtime.py) and can call run_bash / read_file /
+    list_dir / compile_and_run (see agent/tools.py) as many times as it
+    wants within its time budget before submitting a final PoC, instead of
+    single-shot's one-blind-shot-per-attempt.
+
+    Reuses ContextManager / FactAccumulator / RetryMemory / VerifierPipeline
+    exactly as _run_agent_single_shot() does above -- only the turn-by-turn
+    control flow differs. "Attempt" here means the same thing it means in
+    _run_agent_single_shot(): a final PoC submission that gets verified.
+    Tool calls do NOT consume an attempt slot, matching the resolved
+    decision that container lifetime (and now, by extension, attempt
+    budget) spans the whole CVE run, not one attempt.
+    """
+    if few_shot_examples is None:
+        few_shot_examples = load_few_shot_examples(FEW_SHOT_PATH)
+
+    sl = step_logger or NullStepLogger()
+    cve_id = cve_entry.get("id") or cve_entry.get("cve_id", "unknown")
+    logger.info(f"Starting TOOL-USE agent loop for CVE {cve_id} with max_attempts={max_attempts}")
+
+    CONTEXT_BUDGET = int(os.environ.get("CONTEXT_BUDGET_TOKENS", "800000"))
+    ctx = ContextManager(max_tokens=CONTEXT_BUDGET, mode="tool_use")
+    ctx.reset()
+
+    try:
+        initial_prompt = build_tool_mode_prompt(cve_entry, few_shot_examples)
+    except Exception as e:
+        logger.error(f"CVE {cve_id}: Failed to build tool-mode initial prompt: {e}")
+        return AgentResult(
+            cve_id=cve_id, success=False, attempts=0,
+            final_poc="", failure_reason="prompt_build_error",
+            transcript=[], hallucinated_symbols_per_attempt=[]
+        )
+
+    SYSTEM_PROMPT = (
+        "You are an expert vulnerability researcher specializing in PoC exploit generation. "
+        "You have a live shell inside the container the vulnerable code was built in. "
+        "Investigate the real codebase before writing a PoC, and test candidate ideas with "
+        "compile_and_run before committing to a final answer.\n"
+        "RULES:\n"
+        "1. Follow the TOOL_CALL: format exactly when using a tool.\n"
+        "2. When ready to submit your final answer, reply with ONLY a C code block -- no TOOL_CALL: line.\n"
+        "3. The generator program MUST write its output to exactly '/tmp/poc'.\n"
+        "4. Do NOT use hex byte arrays — use loops, fprintf, or fputc.\n"
+        "5. Learn from everything observed so far in this conversation. Do not repeat mistakes.\n"
+        "6. CRITICAL — verification boundary: your shell lets you edit files, rebuild binaries, "
+        "and recompile things inside THIS container, but NONE of that persists into verification. "
+        "Every compile_and_run call, and your final submission, is checked against a FRESH, "
+        "unmodified copy of the vulnerable image and the exact fuzz target it ships with. "
+        "If you find yourself trying to rebuild a binary, patch a harness, or otherwise change "
+        "what gets executed, stop -- that effort is wasted. The only thing that can ever change "
+        "the outcome is the bytes your generator writes to /tmp/poc. If the fuzz target's own "
+        "harness seems not to reach the vulnerable code with the input you tried, the fix is "
+        "almost always a different payload (try other flag/field values in the input format), "
+        "not a different or modified binary.\n"
+    )
+    ctx.add_system_message(SYSTEM_PROMPT)
+    ctx.add_user_message(initial_prompt)
+    ctx.log_context_usage()
+
+    # NOTE: no VerifierPipeline() instance here (unlike _run_agent_single_shot
+    # above) -- the final-submission path below uses tools.run_direct_verification()
+    # instead of verify(), deliberately bypassing the critic. See that
+    # function's docstring for why -- found from a real failed run, not
+    # theorized: the critic's suggestions can tell a tool-use agent to do
+    # something structurally impossible (e.g. "modify the harness"), and
+    # unlike a single-shot agent, a tool-use agent will actually try, and
+    # can burn a whole attempt on it.
+    transcript = []
+    hallucinated_per_attempt = []
+    last_poc = ""
+
+    session = ContainerSession(cve_entry)
+    try:
+        session.start()
+    except Exception as e:
+        logger.error(f"CVE {cve_id}: Failed to start exploration container: {e}")
+        return AgentResult(
+            cve_id=cve_id, success=False, attempts=0,
+            final_poc="", failure_reason="container_start_error",
+            transcript=[], hallucinated_symbols_per_attempt=[]
+        )
+
+    # GUARANTEED cleanup below via try/finally, regardless of how the loop
+    # exits (return, exception, budget/turn cap) -- this is the reason
+    # run_agent() became a thin dispatcher instead of threading try/finally
+    # through _run_agent_single_shot()'s many existing return points above:
+    # that function already works and is already depended-on as-is, so it
+    # was safer to leave it completely untouched and put the new lifecycle
+    # management only around the new code path.
+    try:
+        attempt = 1
+        # Bounds total LLM turns (tool calls + submissions combined) -- a
+        # distinct safety cap from the container's own per-CVE time budget
+        # (container_runtime.DEFAULT_TIME_BUDGET_SECONDS, 1 hour per the
+        # resolved Q3 decision). Either one can trip first: this one guards
+        # against a model that calls tools very fast without doing much
+        # actual work per call; the container budget guards against calls
+        # that are individually slow (e.g. a large project's build).
+        MAX_TOOL_TURNS = int(os.environ.get("MAX_TOOL_TURNS", "200"))
+        # FIX (found watching a live pilot run): reaching MAX_TOOL_TURNS used
+        # to just exit the loop silently -- if the model was still exploring
+        # and hadn't submitted anything yet, that meant losing the whole run
+        # with an empty final_poc, even after a long, promising investigation.
+        # Nudge the model to submit its best guess once turns are running low,
+        # the same way BudgetExceeded already does -- give it a real chance to
+        # produce SOMETHING scoreable before the hard cutoff, rather than
+        # silently discarding a near-complete investigation.
+        NUDGE_MARGIN_TURNS = int(os.environ.get("MAX_TOOL_TURNS_NUDGE_MARGIN", "10"))
+        nudged = False
+        total_turns = 0
+
+        # FIX (found from a real run + a direct question about it): logger.py's
+        # log_attempt_header()/log_llm_response() print FIXED labels sized for
+        # single-shot mode's exactly-5-stages-per-attempt shape (e.g. "[2/5]"
+        # literally means "stage 2 of 5", not "turn 2" -- it's a hardcoded
+        # string in logger.py, not a counter). Calling those every tool-use
+        # turn reprinted the same misleading label dozens of times, since a
+        # tool-use turn doesn't map onto single-shot's 5 stages at all. This
+        # loop now logs its own turn-shaped output instead: the attempt header
+        # once per actual attempt (not once per turn), and a turn line that
+        # shows real turn count and what kind of turn it was.
+        last_logged_attempt = 0
+
+        while attempt <= max_attempts and total_turns < MAX_TOOL_TURNS:
+            total_turns += 1
+            turns_remaining = MAX_TOOL_TURNS - total_turns
+            if attempt != last_logged_attempt:
+                sl.log_attempt_header(attempt, max_attempts)
+                last_logged_attempt = attempt
+            if not nudged and turns_remaining <= NUDGE_MARGIN_TURNS:
+                nudged = True
+                ctx.add_user_message(
+                    f"You have {turns_remaining} tool-call turns left before this run ends "
+                    f"automatically. Wrap up your investigation and submit your best PoC now "
+                    f"as a C code block -- a real attempt based on what you've found so far "
+                    f"is far better than running out of turns with nothing submitted."
+                )
+                ctx.log_context_usage()
+
+            # ── LLM CALL ─────────────────────────────────────────────────
+            llm_start = time.time()
+            try:
+                raw_response = llm_client.call_llm_with_history(ctx.get_history())
+                llm_elapsed = time.time() - llm_start
+                sl.log_tool_turn(total_turns, llm_elapsed, len(raw_response))
+            except Exception as e:
+                logger.error(f"CVE {cve_id}: turn {total_turns} LLM call failed: {e}")
+                return AgentResult(
+                    cve_id=cve_id, success=False, attempts=attempt,
+                    final_poc=last_poc, failure_reason="llm_error",
+                    transcript=transcript,
+                    hallucinated_symbols_per_attempt=hallucinated_per_attempt
+                )
+
+            ctx.add_assistant_message(raw_response)
+            ctx.log_context_usage()
+
+            # ── PARSE: tool call vs. final submission vs. unparseable ──────
+            parsed = tools.parse_response(raw_response)
+
+            if parsed.kind == "unparseable":
+                ctx.add_user_message(
+                    "Your response didn't match a recognized TOOL_CALL: format or contain "
+                    "a valid C code block. Either issue a tool call in the exact format shown "
+                    "earlier, or submit your final answer as a C code block."
+                )
+                continue
+
+            if parsed.kind == "tool_call":
+                sl.log_tool_call(total_turns, parsed.tool_name)
+                try:
+                    observation = tools.dispatch_tool_call(parsed, session, cve_entry)
+                    ctx.add_user_message(observation)
+                except CommandRejected as e:
+                    ctx.add_user_message(f"[REJECTED] {e}")
+                except BudgetExceeded as e:
+                    logger.warning(f"CVE {cve_id}: {e}")
+                    ctx.add_user_message(
+                        f"[BUDGET EXCEEDED] {e}\n\nYour tool-call time budget for this CVE "
+                        "is exhausted. Submit your best PoC now as a C code block -- no more tool calls."
+                    )
+                ctx.log_context_usage()
+                continue  # tool calls do not consume an attempt slot
+
+            # ── FINAL SUBMISSION ────────────────────────────────────────────
+            poc_code = parsed.poc_code
+            last_poc = poc_code
+            sl.log_extraction(True, len(poc_code))
+
+            try:
+                hallucinated_symbols = detect_hallucinations(
+                    target_source_code=cve_entry.get("target_source", ""), poc_code=poc_code
+                )
+            except Exception as e:
+                logger.error(f"CVE {cve_id}: Hallucination detection error: {e}")
+                hallucinated_symbols = []
+            hallucinated_per_attempt.append(hallucinated_symbols)
+
+            try:
+                result = tools.run_direct_verification(poc_code=poc_code, cve_entry=cve_entry)
+            except Exception as e:
+                logger.error(f"CVE {cve_id}: Verifier raised exception: {e}")
+                transcript.append({
+                    "attempt": attempt, "prompt": "(tool-use session — see transcript turns above)",
+                    "raw_response": raw_response, "extracted_poc": poc_code,
+                    "hallucinated_symbols": hallucinated_symbols,
+                    "verifier_status": "error", "verifier_stage": "unknown",
+                    "verifier_feedback": str(e)[:5000], "fuzzer_output": "", "fuzzer_cmd": ""
+                })
+                return AgentResult(
+                    cve_id=cve_id, success=False, attempts=attempt,
+                    final_poc=poc_code, failure_reason="verifier_error",
+                    transcript=transcript,
+                    hallucinated_symbols_per_attempt=hallucinated_per_attempt
+                )
+
+            exec_details = result.details.get("execution", {}) if hasattr(result, "details") else {}
+            transcript.append({
+                "attempt": attempt,
+                "prompt": "(tool-use session — see transcript turns above)",
+                "raw_response": raw_response,
+                "extracted_poc": poc_code,
+                "hallucinated_symbols": hallucinated_symbols,
+                "verifier_status": result.status,
+                "verifier_stage": (
+                    "sanitizer" if result.status == "crash" else
+                    "execution" if exec_details else
+                    "compiler"
+                ),
+                "verifier_feedback": result.feedback,
+                "fuzzer_output": (
+                    exec_details.get("stderr", "") or exec_details.get("stdout", "")
+                )[:800],
+                "fuzzer_cmd": exec_details.get("fuzzer_cmd", ""),
+            })
+
+            if result.status == "crash":
+                logger.info(f"CVE {cve_id}: SUCCESS on attempt {attempt} (tool-use mode)")
+                sl.log_outcome(True, attempt)
+                return AgentResult(
+                    cve_id=cve_id, success=True, attempts=attempt,
+                    final_poc=poc_code, failure_reason="",
+                    transcript=transcript,
+                    hallucinated_symbols_per_attempt=hallucinated_per_attempt
+                )
+
+            if result.status == "infra_fail":
+                logger.error(f"CVE {cve_id}: Infrastructure failure on attempt {attempt}")
+                sl.log_outcome(False, attempt, "verifier_infrastructure_failed")
+                return AgentResult(
+                    cve_id=cve_id, success=False, attempts=attempt,
+                    final_poc=poc_code, failure_reason="verifier_infrastructure_failed",
+                    transcript=transcript,
+                    hallucinated_symbols_per_attempt=hallucinated_per_attempt
+                )
+
+            # Not a crash — feed the verifier's feedback back as the next
+            # observation and let the agent keep going (more tool calls,
+            # or another final submission) on the next attempt.
+            ctx.add_user_message(
+                f"Your submission did not trigger the crash (status={result.status}):\n{result.feedback[:3000]}"
+            )
+            ctx.log_context_usage()
+            attempt += 1
+
+        # ── LOOP EXIT: max_attempts or MAX_TOOL_TURNS reached ────────────────
+        attempts_used = max(attempt - 1, 0)
+        logger.warning(
+            f"CVE {cve_id}: FAILURE after {attempts_used} attempts / {total_turns} total turns (tool-use mode)"
+        )
+        failure_reason = "max_attempts_reached" if attempt > max_attempts else "max_tool_turns_reached"
+        sl.log_outcome(False, attempts_used, failure_reason)
+        return AgentResult(
+            cve_id=cve_id, success=False, attempts=attempts_used,
+            final_poc=last_poc, failure_reason=failure_reason,
+            transcript=transcript,
+            hallucinated_symbols_per_attempt=hallucinated_per_attempt
+        )
+    finally:
+        session.cleanup()
+
+
+def run_agent(
+    cve_entry: dict,
+    max_attempts: int = 5,
+    few_shot_examples: list = None,
+    step_logger=None,
+) -> AgentResult:
+    """
+    Thin dispatcher. AGENT_MODE environment variable selects which
+    implementation actually runs:
+      - "single_shot" (default) -- _run_agent_single_shot() above,
+        completely unchanged from before this architecture existed.
+      - "tool_use" -- _run_agent_with_tools() above, the new agentic loop
+        with live container access.
+
+    Q4 (resolved): default is single_shot, so every existing caller of
+    run_agent() is entirely unaffected unless AGENT_MODE=tool_use is
+    explicitly set -- this is what lets the two approaches be A/B'd on the
+    same CVEs rather than one replacing the other outright.
+    """
+    mode = os.environ.get("AGENT_MODE", "single_shot")
+    if mode == "tool_use":
+        return _run_agent_with_tools(cve_entry, max_attempts, few_shot_examples, step_logger)
+    return _run_agent_single_shot(cve_entry, max_attempts, few_shot_examples, step_logger)

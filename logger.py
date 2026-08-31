@@ -89,6 +89,23 @@ class StepLogger:
     def log_llm_response(self, elapsed_sec: float, char_count: int) -> None:
         self._safe_print(f"  [2/5] 🤖 LLM response           {elapsed_sec:.1f}s  ({char_count:,} chars)")
 
+    def log_tool_turn(self, turn_num: int, elapsed_sec: float, char_count: int) -> None:
+        """
+        For AGENT_MODE=tool_use (agent/agent_loop.py's _run_agent_with_tools).
+        log_llm_response() above prints a fixed "[2/5]" label sized for
+        single-shot mode's exactly-5-stages-per-attempt shape -- meaningless
+        (and printed dozens of times unchanged) for a tool-use turn, which
+        doesn't map onto those 5 stages at all. This shows real turn count
+        instead of a static label.
+        """
+        self._safe_print(f"  [turn {turn_num}] 🤖 LLM response          {elapsed_sec:.1f}s  ({char_count:,} chars)")
+
+    def log_tool_call(self, turn_num: int, tool_name: str) -> None:
+        """Companion to log_tool_turn() -- shows which tool the agent invoked
+        this turn, previously only visible by reading the truncated raw-
+        response preview in the [DEBUG] line above it."""
+        self._safe_print(f"  [turn {turn_num}] 🛠️  tool call: {tool_name}")
+
     def log_extraction(self, success: bool, char_count: int = 0, error: str = "") -> None:
         if success:
             self._safe_print(f"  [3/5] 🔍 Code extracted          ✓  ({char_count:,} chars C code)")
