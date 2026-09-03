@@ -1,20 +1,17 @@
 [
   {
-    "cve_id": "arvo:1972",
-    "target_source": "ndex 19f84b82..9b2df56a 100644\n\n/* ... */\n\n@@ -1250,101 +1250,103 @@ void\nxmlSnprintfElementContent(char *buf, int size, xmlElementContentPtr content, int englob) {\n    int len;\n\n    if (content == NULL) return;\n    len = strlen(buf);\n    if (size - len < 50) {\n\tif ((size - len > 4) && (buf[len - 1] != '.'))\n\t    strcat(buf, \" ...\");\n\treturn;\n    }\n    if (englob) strcat(buf, \"(\");\n    switch (content->type) {\n        case XML_ELEMENT_CONTENT_PCDATA:\n            strcat(buf, \"#PCDATA\");\n\t    break;\n\tcase XML_ELEMENT_CONTENT_ELEMENT:\n\t    if (content->prefix != NULL) {\n\t\tif (size - len < xmlStrlen(content->prefix) + 10) {\n\t\t    strcat(buf, \" ...\");\n\t\t    return;\n\t\t}\n\t\tstrcat(buf, (char *) content->prefix);\n\t\tstrcat(buf, \":\");\n\t    }\n\t    if (size - len < xmlStrlen(content->name) + 10) {\n\t\tstrcat(buf, \" ...\");\n\t\treturn;\n\t    }\n\t    if (content->name != NULL)\n\t\tstrcat(buf, (char *) content->name);\n\t    break;\n\tcase XML_ELEMENT_CONTENT_SEQ:\n\t    if ((content->c1->type == XML_ELEMENT_CONTENT_OR) ||\n\t        (content->c1->type == XML_ELEMENT_CONTENT_SEQ))\n\t\txmlSnprintfElementContent(buf, size, content->c1, 1);\n\t    else\n\t\txmlSnprintfElementContent(buf, size, content->c1, 0);\n\t    len = strlen(buf);\n\t    if (size - len < 50) {\n\t\tif ((size - len > 4) && (buf[len - 1] != '.'))\n\t\t    strcat(buf, \" ...\");\n\t\treturn;\n\t    }\n            strcat(buf, \" , \");\n\t    if (((content->c2->type == XML_ELEMENT_CONTENT_OR) ||\n\t\t (content->c2->ocur != XML_ELEMENT_CONTENT_ONCE)) &&\n\t\t(content->c2->type != XML_ELEMENT_CONTENT_ELEMENT))\n\t\txmlSnprintfElementContent(buf, size, content->c2, 1);\n\t    else\n\t\txmlSnprintfElementContent(buf, size, content->c2, 0);\n\t    break;\n\tcase XML_ELEMENT_CONTENT_OR:\n\t    if ((content->c1->type == XML_ELEMENT_CONTENT_OR) ||\n\t        (content->c1->type == XML_ELEMENT_CONTENT_SEQ))\n\t\txmlSnprintfElementContent(buf, size, content->c1, 1);\n\t    else\n\t\txmlSnprintfElementContent(buf, size, content->c1, 0);\n\t    len = strlen(buf);\n\t    if (size - len < 50) {\n\t\tif ((size - len > 4) && (buf[len - 1] != '.'))\n\t\t    strcat(buf, \" ...\");\n\t\treturn;\n\t    }\n            strcat(buf, \" | \");\n\t    if (((content->c2->type == XML_ELEMENT_CONTENT_SEQ) ||\n\t\t (content->c2->ocur != XML_ELEMENT_CONTENT_ONCE)) &&\n\t\t(content->c2->type != XML_ELEMENT_CONTENT_ELEMENT))\n\t\txmlSnprintfElementContent(buf, size, content->c2, 1);\n\t    else\n\t\txmlSnprintfElementContent(buf, size, content->c2, 0);\n\t    break;\n    }\n    if (englob)\n        strcat(buf, \")\");\n    switch (content->ocur) {\n        case XML_ELEMENT_CONTENT_ONCE:\n\t    break;\n        case XML_ELEMENT_CONTENT_OPT:\n\t    strcat(buf, \"?\");\n\t    break;\n        case XML_ELEMENT_CONTENT_MULT:\n\t    strcat(buf, \"*\");\n\t    break;\n        case XML_ELEMENT_CONTENT_PLUS:\n\t    strcat(buf, \"+\");\n\t    break;\n    }\n}\n\n/****************************************************************\n *\t\t\t\t\t\t\t\t*\n *\tRegistration of DTD declarations\t\t\t*\n *\t\t\t\t\t\t\t\t*\n ****************************************************************/\n\n/**\n * xmlFreeElement:\n * @elem:  An element\n *\n * Deallocate the memory used by an element definition\n */",
-    "extraction_method": "patch_hunk_context_fallback",
-    "poc_bucket": "medium",
+    "cve_id": "arvo:14232",
+    "target_source": "static char *\nidentify_http_path(struct lwan_request *request, char *buffer)\n{\n    struct lwan_request_parser_helper *helper = request->helper;\n    static const size_t minimal_request_line_len = sizeof(\"/ HTTP/1.0\") - 1;\n    char *space, *end_of_line;\n    ptrdiff_t end_len;\n\n    if (UNLIKELY(*buffer != '/'))\n        return NULL;\n\n    end_len = buffer - helper->buffer->value;\n    if (UNLIKELY((size_t)end_len >= helper->buffer->len))\n        return NULL;\n\n    end_of_line = memchr(buffer, '\\r', helper->buffer->len - (size_t)end_len);\n    if (UNLIKELY(!end_of_line))\n        return NULL;\n    if (UNLIKELY((size_t)(end_of_line - buffer) < minimal_request_line_len))\n        return NULL;\n    *end_of_line = '\\0';\n\n    space = end_of_line - sizeof(\"HTTP/X.X\");\n\n    request->url.value = buffer;\n    request->url.len = (size_t)(space - buffer);\n    parse_fragment_and_query(request, space);\n    request->original_url = request->url;\n\n    *space++ = '\\0';\n\n    STRING_SWITCH_LARGE(space) {\n    case MULTICHAR_CONSTANT_LARGE('H','T','T','P','/','1','.','0'):\n        request->flags |= REQUEST_IS_HTTP_1_0;\n        break;\n    case MULTICHAR_CONSTANT_LARGE('H','T','T','P','/','1','.','1'):\n        break;\n    default:\n        return NULL;\n    }\n\n    return end_of_line + 1;\n}",
+    "extraction_method": "patch_line_lookup",
+    "poc_bucket": "long",
     "_crash_funcs": [
-      "xmlSnprintfElementContent",
-      "xmlSnprintfElementContent",
-      "xmlSnprintfElementContent"
+      "parse_headers",
+      "parse_http_request",
+      "fuzz_parse_http_request"
     ],
     "_patch_files": [
-      "result/valid/781333.xml",
-      "result/valid/781333.xml.err",
-      "result/valid/781333.xml.err.rdr",
-      "test/valid/781333.xml",
-      "valid.c"
+      "fuzz/clusterfuzz-testcase-minimized-request_fuzzer-5717480481226752",
+      "src/lib/lwan-request.c"
     ]
   }
 ]

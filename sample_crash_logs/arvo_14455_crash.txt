@@ -1,0 +1,30 @@
+# --- repro environment -------------------------------------
+# image:            n132/arvo:14455-vul
+# image_id:         sha256:e5fce0dca09fdde1bbc63921ef0a9e4c8d866896c62e2a547ea70b2c57583a02
+# host_kernel:      Linux 6.8.0-1052-azure x86_64
+# aslr_setting:     2
+# docker_version:   29.3.0-1
+# --------------------------------------------------------------
+INFO: Seed: 87735423
+INFO: Loaded 1 modules   (3029 inline 8-bit counters): 3029 [0x8c2fa0, 0x8c3b75), 
+INFO: Loaded 1 PC tables (3029 PCs): 3029 [0x8c3b78,0x8cf8c8), 
+/out/request_fuzzer: Running 1 inputs 1 time(s) each.
+Running: /tmp/poc
+=================================================================
+==7==ERROR: AddressSanitizer: negative-size-param: (size=-3)
+SCARINESS: 10 (negative-size-param)
+    #0 0x43746d in __interceptor_memmem /src/llvm/projects/compiler-rt/lib/asan/../sanitizer_common/sanitizer_common_interceptors.inc:660:5
+    #1 0x4ebe19 in parse_proxy_protocol_v2 /src/lwan/src/lib/lwan-request.c:279:24
+    #2 0x4e6337 in parse_http_request /src/lwan/src/lib/lwan-request.c:1173:18
+    #3 0x4e8db7 in fuzz_parse_http_request /src/lwan/src/lib/lwan-request.c:1659:9
+    #4 0x550281 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/libfuzzer/FuzzerLoop.cpp:553:15
+    #5 0x50db8f in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/libfuzzer/FuzzerDriver.cpp:286:6
+    #6 0x519493 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/libfuzzer/FuzzerDriver.cpp:717:9
+    #7 0x50d1e7 in main /src/libfuzzer/FuzzerMain.cpp:19:10
+    #8 0x71184480883f in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2083f)
+    #9 0x421f48 in _start (/out/request_fuzzer+0x421f48)
+
+DEDUP_TOKEN: __interceptor_memmem--parse_proxy_protocol_v2--parse_http_request
+0x0000011f63d0 is located 16 bytes inside of global variable 'data_copy' defined in '/src/lwan/src/lib/lwan-request.c:1630:17' (0x11f63c0) of size 32767
+SUMMARY: AddressSanitizer: negative-size-param /src/llvm/projects/compiler-rt/lib/asan/../sanitizer_common/sanitizer_common_interceptors.inc:660:5 in __interceptor_memmem
+==7==ABORTING
