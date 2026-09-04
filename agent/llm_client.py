@@ -88,7 +88,7 @@ def call_llm(
 
     for attempt in range(max_retries):
         try:
-            print(f"[DEBUG] Attempt {attempt + 1}/{max_retries}: Sending request to {BASE_URL}")
+            print(f"[DEBUG] API call retry {attempt + 1}/{max_retries} (network/rate-limit retries, unrelated to CVE attempt count): Sending request to {BASE_URL}")
             print(f"[DEBUG] Payload model: {payload['model']}")
             response = requests.post(BASE_URL, json=payload, headers=headers, timeout=(10, 120))
             print(f"[DEBUG] Response status: {response.status_code}")
@@ -183,7 +183,7 @@ def call_llm_with_history(
 
     for attempt in range(max_retries):
         try:
-            print(f"[DEBUG] Attempt {attempt + 1}/{max_retries}: Sending request to {BASE_URL}")
+            print(f"[DEBUG] API call retry {attempt + 1}/{max_retries} (network/rate-limit retries, unrelated to CVE attempt count): Sending request to {BASE_URL}")
             print(f"[DEBUG] Payload model: {payload['model']}")
             response = requests.post(BASE_URL, json=payload, headers=headers, timeout=(10, 120))
             print(f"[DEBUG] Response status: {response.status_code}")

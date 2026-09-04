@@ -79,9 +79,38 @@ def _extract_from_fenced_block(text: str) -> str:
     
     if not matches:
         return ""
-    
-    # Return the last match, stripped of whitespace
-    return matches[-1].strip()
+    if len(matches) == 1:
+        return matches[0].strip()
+
+    # FIX (found from a real tool-use run, arvo:1972): a single long tool-use
+    # response can contain many small inline code fragments -- the model
+    # quoting a line or two of source while reasoning about it -- in addition
+    # to its actual final generator. Blindly taking the LAST fenced block
+    # (matches[-1], unconditionally, below this comment previously) is a safe
+    # assumption for single-shot mode's typical "one block of analysis, one
+    # final code block" shape, where it's effectively the only candidate --
+    # but it broke down here: the final response was 65,835 chars containing
+    # many small quoted snippets, and the actual last one was a 69-character
+    # fragment, not the intended generator, because the model appended a
+    # small trailing reference after its real answer.
+    #
+    # Score candidates instead of blindly trusting position: prefer a block
+    # that looks like a complete generator (references /tmp/poc or fopen --
+    # every valid generator must open /tmp/poc for writing, per the system
+    # prompt's own mandatory rule) and, among those, the longest. Falls back
+    # to effectively the same "last wins" tiebreak when nothing scores
+    # differently, so single-shot's existing single-block behavior above is
+    # completely unchanged, and even its rare multi-block case only changes
+    # outcome when one candidate is clearly a more complete generator than
+    # another.
+    def _looks_like_generator(candidate: str) -> bool:
+        return ('/tmp/poc' in candidate) or ('fopen' in candidate)
+
+    best_index = max(
+        range(len(matches)),
+        key=lambda i: (_looks_like_generator(matches[i]), len(matches[i]), i)
+    )
+    return matches[best_index].strip()
 
 
 def _extract_heuristic(text: str) -> str:

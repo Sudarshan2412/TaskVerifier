@@ -740,7 +740,23 @@ def _run_agent_with_tools(
                     hallucinated_symbols_per_attempt=hallucinated_per_attempt
                 )
 
-            ctx.add_assistant_message(raw_response)
+            # FIX (arvo:3848): turns 65-69 produced ~55k-char responses --
+            # the model hitting its output token limit and dumping everything
+            # (source code, reasoning, prior PoCs) into one giant turn. That
+            # gets added to context verbatim, blowing past the context budget
+            # and making the model even more confused on the next turn.
+            # Cap the context-stored version of a very large response to
+            # MAX_OBSERVATION_CHARS. The full response is still parsed by
+            # tools.parse_response() above for the best code block -- only
+            # what gets stored in conversation history is trimmed.
+            MAX_RESPONSE_STORE_CHARS = 12_000
+            context_response = (
+                raw_response[:MAX_RESPONSE_STORE_CHARS]
+                + f"\n[...response truncated from {len(raw_response)} to {MAX_RESPONSE_STORE_CHARS} chars for context budget...]"
+                if len(raw_response) > MAX_RESPONSE_STORE_CHARS
+                else raw_response
+            )
+            ctx.add_assistant_message(context_response)
             ctx.log_context_usage()
 
             # ── PARSE: tool call vs. final submission vs. unparseable ──────
@@ -842,11 +858,25 @@ def _run_agent_with_tools(
                     hallucinated_symbols_per_attempt=hallucinated_per_attempt
                 )
 
-            # Not a crash — feed the verifier's feedback back as the next
-            # observation and let the agent keep going (more tool calls,
-            # or another final submission) on the next attempt.
+            # FIX (arvo:3848 + general): the old message just said "your
+            # submission did not trigger the crash." That gives the model
+            # zero instruction to do anything other than immediately
+            # resubmit, which is exactly what happened: attempts 2-5 each
+            # spent exactly 1 turn resubmitting the same (or nearly same)
+            # PoC because the context was already exhausted and there was
+            # no signal to investigate further. Adding an explicit directive
+            # to use tools to investigate and try a DIFFERENT approach
+            # before submitting again -- not just rephrase the same PoC.
             ctx.add_user_message(
-                f"Your submission did not trigger the crash (status={result.status}):\n{result.feedback[:3000]}"
+                f"Your submission did not trigger the crash (status={result.status}):\n"
+                f"{result.feedback[:3000]}\n\n"
+                f"IMPORTANT: Do NOT immediately resubmit the same or similar PoC. "
+                f"Use your tools (run_bash, read_file, compile_and_run) to investigate WHY "
+                f"the previous attempt failed before trying again. Look at what the crash "
+                f"description says the vulnerable code path actually requires, and verify "
+                f"with compile_and_run that your new hypothesis actually reaches that path "
+                f"before submitting. A different approach is needed -- not the same input "
+                f"with minor variations."
             )
             ctx.log_context_usage()
             attempt += 1
