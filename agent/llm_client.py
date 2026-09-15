@@ -22,7 +22,101 @@ QWEN_37_PLUS_MODEL = "qwen/qwen-3.7-plus"
 KIMI_K26_MODEL = "moonshotai/kimi-k2.6"
 
 DEFAULT_MODEL = DEEPSEEK_MODEL
-DEFAULT_MAX_RESPONSE_TOKENS = int(os.environ.get("MAX_RESPONSE_TOKENS", "16384"))
+
+# FIX (token-budget audit, Sept 2026): this used to default to 16384 and was
+# applied identically to every turn -- a `TOOL_CALL: list_dir` turn that
+# should cost a few dozen tokens got the same ceiling as a final PoC
+# submission. Confirmed in logs/medium_cves_failures/arvo_3848: the model
+# was actually hitting the old ceiling, producing a 55,023-char
+# (~15.7k-token) response on attempt 1 alone. A real generator program is
+# rarely more than a few hundred lines; a real tool call is a handful of
+# lines. 4000 gives real submissions plenty of room while cutting off the
+# "think out loud indefinitely" failure mode that was both the main token
+# cost driver and (via code_extractor.py picking the wrong fragment out of
+# a wall of text) a contributor to wasted attempts on medium/long CVEs.
+# Still fully overridable via MAX_RESPONSE_TOKENS for anyone who needs more.
+DEFAULT_MAX_RESPONSE_TOKENS = int(os.environ.get("MAX_RESPONSE_TOKENS", "4000"))
+
+
+# ---------------------------------------------------------------------------
+# Cumulative token usage tracking (process-lifetime -- i.e. one
+# `python run_pipeline.py` invocation, since each run is a fresh process)
+# ---------------------------------------------------------------------------
+_cumulative_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+
+def get_cumulative_usage() -> dict:
+    """
+    Return a copy of the running token-usage total for this process so far.
+
+    Updated after every successful response from both call_llm() and
+    call_llm_with_history() that includes a `usage` field -- OpenRouter
+    always includes one for a real completion. Callers (e.g. agent_loop.py's
+    per-turn logging) can read this after each call to show a live running
+    total instead of only being able to reconstruct token spend after the
+    fact from a saved report.
+    """
+    return dict(_cumulative_usage)
+
+
+def reset_cumulative_usage() -> None:
+    """Zero the running total. Not called anywhere in the pipeline itself --
+    available for tests or tools that want a clean count without starting a
+    new process."""
+    for key in _cumulative_usage:
+        _cumulative_usage[key] = 0
+
+
+def _record_usage(usage: dict | None) -> None:
+    """
+    Add one response's token usage to the running total and print it, so
+    token consumption is visible in the terminal as a run progresses,
+    rather than only reconstructable afterward from a saved report.
+
+    FIX (token-budget audit follow-up, Sept 2026): added alongside the
+    DEFAULT_MAX_RESPONSE_TOKENS / MAX_TOOL_TURNS / context-budget reductions
+    made earlier in that audit, so their effect on real token spend is
+    visible live on a run instead of only inferable after the fact.
+
+    `usage` is OpenRouter's standard OpenAI-compatible field
+    (prompt_tokens / completion_tokens / total_tokens). Missing or
+    malformed usage data is treated as "nothing to record," never as an
+    error -- this must never be the reason a real, usable LLM response
+    fails.
+    """
+    if not isinstance(usage, dict) or not any(
+        usage.get(k) for k in ("prompt_tokens", "completion_tokens", "total_tokens")
+    ):
+        return
+
+    prompt = usage.get("prompt_tokens") or 0
+    completion = usage.get("completion_tokens") or 0
+    total = usage.get("total_tokens") or (prompt + completion)
+
+    _cumulative_usage["prompt_tokens"] += prompt
+    _cumulative_usage["completion_tokens"] += completion
+    _cumulative_usage["total_tokens"] += total
+
+    print(
+        f"[USAGE] this call: {prompt:,} prompt + {completion:,} completion = {total:,} tokens"
+        f"  |  running total this run: {_cumulative_usage['total_tokens']:,} tokens"
+        f" ({_cumulative_usage['prompt_tokens']:,} prompt + {_cumulative_usage['completion_tokens']:,} completion)"
+    )
+
+
+def _extract_openrouter_error_reason(error_detail) -> str | None:
+    """
+    Pull OpenRouter's machine-readable error reason (e.g.
+    'in_flight_budget_exhausted') out of a parsed error body, if present.
+
+    error_detail is either the parsed JSON error body (dict) or raw
+    response text (str, when the body wasn't valid JSON) -- see the
+    `except: error_detail = e.response.text` fallback below. Only the dict
+    case has a reason to extract.
+    """
+    if not isinstance(error_detail, dict):
+        return None
+    return error_detail.get("error", {}).get("metadata", {}).get("reason")
 
 
 def _extract_message_content(choice: dict) -> str | None:
@@ -111,6 +205,7 @@ def call_llm(
                 raise RuntimeError("OpenRouter API returned empty assistant content after all retries.")
 
             print(f"[DEBUG] Successfully extracted response: {result[:50]}...")
+            _record_usage(data.get("usage"))
             return result
 
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
@@ -135,6 +230,32 @@ def call_llm(
                     time.sleep(sleep_time)
                 else:
                     raise RuntimeError("OpenRouter API rate limit hit after all retries.")
+            elif (
+                e.response.status_code == 402
+                and _extract_openrouter_error_reason(error_detail) == "in_flight_budget_exhausted"
+            ):
+                # FIX (Sept 2026, arvo:26952 baseline run): OpenRouter's own
+                # error body describes this as transient -- a per-account
+                # cap on requests reserved-but-not-yet-settled, distinct
+                # from actually being out of credits -- and includes a
+                # Retry-After header with its own estimate of when it'll
+                # clear. Previously this fell into the `else` branch below
+                # and raised immediately, wasting the entire attempt on a
+                # condition OpenRouter itself expected to resolve on its own.
+                if attempt < max_retries - 1:
+                    retry_after = e.response.headers.get("Retry-After")
+                    try:
+                        sleep_time = float(retry_after) if retry_after is not None else 30.0
+                    except ValueError:
+                        sleep_time = 30.0
+                    print(
+                        f"[DEBUG] In-flight budget exhausted (transient OpenRouter "
+                        f"billing cap, not necessarily low balance). Sleeping "
+                        f"{sleep_time:.0f}s before retry..."
+                    )
+                    time.sleep(sleep_time)
+                else:
+                    raise RuntimeError(f"OpenRouter API HTTP error: {e.response.status_code} - {error_detail}")
             else:
                 raise RuntimeError(f"OpenRouter API HTTP error: {e.response.status_code} - {error_detail}")
 
@@ -206,6 +327,7 @@ def call_llm_with_history(
                 raise RuntimeError("OpenRouter API returned empty assistant content after all retries.")
 
             print(f"[DEBUG] Successfully extracted response: {result[:50]}...")
+            _record_usage(data.get("usage"))
             return result
 
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
@@ -230,6 +352,31 @@ def call_llm_with_history(
                     time.sleep(sleep_time)
                 else:
                     raise RuntimeError("OpenRouter API rate limit hit after all retries.")
+            elif (
+                e.response.status_code == 402
+                and _extract_openrouter_error_reason(error_detail) == "in_flight_budget_exhausted"
+            ):
+                # FIX (Sept 2026, arvo:26952 baseline run): see the matching
+                # comment in call_llm() above -- this is the function
+                # agent_loop.py actually calls every turn, so it's the one
+                # that hit the real 402 on arvo:26952's tool-use baseline
+                # run. Same fix: OpenRouter's own error body calls this
+                # transient and gives a Retry-After estimate, so back off
+                # and retry instead of raising and losing the whole attempt.
+                if attempt < max_retries - 1:
+                    retry_after = e.response.headers.get("Retry-After")
+                    try:
+                        sleep_time = float(retry_after) if retry_after is not None else 30.0
+                    except ValueError:
+                        sleep_time = 30.0
+                    print(
+                        f"[DEBUG] In-flight budget exhausted (transient OpenRouter "
+                        f"billing cap, not necessarily low balance). Sleeping "
+                        f"{sleep_time:.0f}s before retry..."
+                    )
+                    time.sleep(sleep_time)
+                else:
+                    raise RuntimeError(f"OpenRouter API HTTP error: {e.response.status_code} - {error_detail}")
             else:
                 raise RuntimeError(f"OpenRouter API HTTP error: {e.response.status_code} - {error_detail}")
 

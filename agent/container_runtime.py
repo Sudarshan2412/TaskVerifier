@@ -69,7 +69,20 @@ CONTAINER_NAME_PREFIX = "taskverifier"
 # Cap how much of any single command's output gets fed back to the model as
 # an observation -- an unbounded `cat` of a huge file would blow the context
 # budget in one turn.
-MAX_OBSERVATION_CHARS = 20_000
+#
+# FIX (token-budget audit, Sept 2026): this defaulted to 20,000 chars,
+# applied independently to stdout AND stderr -- a single run_bash call
+# could legitimately return up to 40,000 chars (~10k tokens) as one
+# observation. That's generous for routine exploration commands (ls, grep,
+# a targeted read_file range); read_file already pushes the model toward
+# START_LINE/END_LINE for anything bigger than a full-file dump (see
+# agent/tools.py), so most legitimate observations are much smaller than
+# this ceiling anyway. Lowering it tightens the common case without
+# changing behavior for genuinely large-but-necessary output -- a command
+# that needs more than 6,000 chars to answer "what does this look like" is
+# rare enough that the model can re-run it with a narrower filter/range
+# instead.
+MAX_OBSERVATION_CHARS = 6_000
 
 
 # ── Command safety filter -----------------------------------------------------

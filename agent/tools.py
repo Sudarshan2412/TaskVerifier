@@ -22,7 +22,9 @@ import shlex
 import uuid
 
 from agent.code_extractor import extract_code, ExtractionError
-from agent.container_runtime import ContainerSession, CommandRejected, BudgetExceeded
+from agent.container_runtime import (
+    ContainerSession, CommandRejected, BudgetExceeded, MAX_OBSERVATION_CHARS,
+)
 from verifier.compiler import compile_poc, cleanup_compile_result
 from verifier.execution import check_execution
 from verifier import _extract_real_asan, _validate_crash_site, VerifierResult
@@ -41,6 +43,11 @@ built in. Use it to look at the real source before writing a PoC, and to \
 test candidate inputs before committing to a final answer. You have a \
 limited total time budget for tool calls this run -- don't waste it on \
 exploratory commands that don't move you closer to a working PoC.
+
+Keep tool-call turns short: a TOOL_CALL reply should contain ONLY the tool \
+call itself, nothing else -- no restated context, no re-deriving analysis \
+you've already written earlier in this same conversation. Save your \
+reasoning for the final submission turn.
 
 To use a tool, reply with ONLY the tool call, nothing else:
 
@@ -177,7 +184,20 @@ def dispatch_tool_call(parsed: ParsedResponse, session: ContainerSession, cve_en
             # Cap whole-file reads so one huge file can't blow the context
             # budget in a single turn -- push the model toward START_LINE/
             # END_LINE for anything bigger than this.
-            cmd = f"head -c 20000 {_shell_quote(path)}"
+            #
+            # FIX (token-budget audit, Sept 2026): this must stay <=
+            # container_runtime.MAX_OBSERVATION_CHARS. session.exec() below
+            # truncates stdout to that cap by taking the LAST N chars
+            # (tail-style, since run_bash output is often more useful from
+            # the end -- e.g. a build log's final error). If this head cap
+            # were larger than that truncation cap, a whole-file read would
+            # silently return a confusing slice from the *middle* of the
+            # file (whatever survives head's first N chars, then a
+            # last-N-chars truncation on top of that) instead of the
+            # beginning the model actually asked for. Keeping the two equal
+            # means a whole-file read always returns exactly the file's
+            # first MAX_OBSERVATION_CHARS chars, with no surprise crop.
+            cmd = f"head -c {MAX_OBSERVATION_CHARS} {_shell_quote(path)}"
         result = session.exec(cmd)
         if result["exit_code"] != 0:
             return f"[read_file {path}] error (exit {result['exit_code']}): {result['stderr'][:500]}"
@@ -299,8 +319,39 @@ def run_direct_verification(poc_code: str, cve_entry: dict) -> VerifierResult:
 def _dispatch_compile_and_run(poc_code: str, cve_entry: dict) -> str:
     """Thin wrapper around run_direct_verification() for the mid-attempt
     exploratory tool -- see that function's docstring for why this doesn't
-    call verify()/the critic."""
+    call verify()/the critic.
+
+    FIX (Sept 2026, better failed-submission analysis): a no_crash or
+    wrong_crash result used to be handed back as a bare status + feedback
+    dump, with none of the strategic pressure a failed bare final_submission
+    already gets in agent_loop.py's "do NOT immediately resubmit -- go
+    investigate WHY" directive. That gap mattered more once this became the
+    thing agent_loop.py's per-attempt turn-budget boundary falls back to
+    auto-submitting (see _run_agent_with_tools' MAX_TURNS_PER_ATTEMPT) -- the
+    model needs the same pressure here, ideally earlier, since this is its
+    first and cheapest signal, ahead of any real attempt being consumed.
+
+    wrong_crash gets its own, sharper guidance rather than being folded into
+    generic "try something different" phrasing: it's a much more informative
+    result than plain no_crash, since the input reached *some* crash, just
+    not the required one -- worth reading as "you're close, refocus on the
+    specific location" rather than "start over."
+    """
     if not poc_code:
         return "[compile_and_run] error: no C code block found after the TOOL_CALL: compile_and_run line"
     result = run_direct_verification(poc_code, cve_entry)
-    return f"[compile_and_run] {result.status.upper()}\n{result.feedback}"
+    guidance = ""
+    if result.status == "wrong_crash":
+        guidance = (
+            "\n\nThis candidate DOES trigger a crash, just not the required one -- you're "
+            "closer than a plain no-crash result. Compare the actual vs. expected location "
+            "above and adjust your input to reach that specific code path, rather than "
+            "treating this as a fully wrong approach."
+        )
+    elif result.status in ("no_crash", "compile_fail"):
+        guidance = (
+            "\n\nDon't just tweak this candidate's bytes and retest blindly -- if you're not "
+            "sure WHY this didn't crash, use run_bash/read_file to verify your assumption "
+            "about the vulnerable code path before trying again."
+        )
+    return f"[compile_and_run] {result.status.upper()}\n{result.feedback}{guidance}"

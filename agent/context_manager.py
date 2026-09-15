@@ -50,16 +50,75 @@ class ContextManager:
         """Add a system message (should be called once, before any user messages)."""
         self.history.insert(0, {"role": "system", "content": content})
 
+    def update_system_message(self, content: str) -> None:
+        """
+        Replace the system message's (history[0]'s) content in place, without
+        adding a new message to history.
+
+        FIX (token-budget audit follow-up, Sept 2026): added so agent_loop.py's
+        tool-use loop can keep a FactAccumulator-derived "CONFIRMED FACTS"
+        block visible for the whole run. The system message is the one piece
+        of content _truncate_if_needed() always preserves verbatim in both
+        compression strategies below -- refreshing it in place, rather than
+        appending a new user/assistant message every time a fact is learned,
+        means accumulated facts survive compression instead of aging out
+        along with the turns that originally established them, and doesn't
+        add a single extra message to the history that compression would
+        then have to account for.
+
+        Raises ValueError if called before add_system_message() -- this is a
+        caller bug (nothing to update yet), not a recoverable runtime state.
+        """
+        if not self.history or self.history[0]["role"] != "system":
+            raise ValueError(
+                "update_system_message() called but history[0] is not a system "
+                "message -- call add_system_message() first."
+            )
+        self.history[0]["content"] = content
+
     def add_user_message(self, content: str) -> None:
         """
         Add a user message to the history.
-        
+
         Args:
             content: The user message content string
+
+        FIX (Sept 2026, traced from two real tool-use runs on arvo:26952):
+        this used to unconditionally append a new 'user' message even when
+        the previous message was also 'user', only logging a warning that
+        it "may indicate a bug." Traced the actual trigger: with
+        MAX_TOOL_TURNS=50 and MAX_TOOL_TURNS_NUDGE_MARGIN=10, the tool-use
+        loop's "wrap up" nudge always fires at turn 40 -- if turn 39 was a
+        tool call (which ends by adding a 'user'-role observation), the
+        nudge's own add_user_message() at the top of the next iteration
+        landed right after it with no assistant turn in between, every
+        single time. That's two 'user' messages back to back, which most
+        chat APIs don't expect mid-conversation, right at the exact moment
+        the model is being asked to converge -- confirmed present in both
+        real runs, at the same deterministic turn number.
+
+        Every consecutive-user case in this codebase's design is content
+        that logically belongs together (an observation plus a follow-up
+        instruction about it, or two separate instructions in a row) --
+        there's no call site that actually needs two independent 'user'
+        turns with no assistant reply between them. So instead of just
+        warning and duplicating the role, merge the new content into the
+        existing last 'user' message. This fixes the bug at its source for
+        every current and future call site that could hit this timing, not
+        just the one that happened to surface it.
         """
-        # Validate: warn if last message was also "user"
         if self.history and self.history[-1]["role"] == "user":
-            logger.warning("Two consecutive 'user' messages detected. This may indicate a bug in agent_loop.py")
+            logger.warning(
+                "Two consecutive 'user' messages -- merging into the previous "
+                "one instead of duplicating the role (see add_user_message()'s "
+                "docstring for why this can legitimately happen)."
+            )
+            # Warn if content is empty
+            if not content or not content.strip():
+                logger.warning("Empty user message content. Merging anyway.")
+            self.history[-1]["content"] = f"{self.history[-1]['content']}\n\n{content}"
+            self._truncate_if_needed()
+            return
 
         # Warn if content is empty
         if not content or not content.strip():
@@ -136,7 +195,19 @@ class ContextManager:
 
     def _truncate_if_needed(self) -> None:
         """
-        Apply truncation ONLY if context exceeds 70% of the budget.
+        Apply truncation ONLY if context exceeds 50% of the budget.
+
+        FIX (token-budget audit, Sept 2026): this used to trigger at 70% of
+        max_tokens, and max_tokens itself defaulted to 800,000 (see
+        agent_loop.py's CONTEXT_BUDGET) -- a 560,000-token trigger that no
+        realistic run reaches before MAX_TOOL_TURNS or the container's
+        1-hour time budget ends it first. In practice this meant the
+        compression logic below almost never ran, and the full,
+        uncompressed history kept getting resent on every turn. Lowering
+        the trigger to 50% (and lowering the default max_tokens itself, see
+        agent_loop.py) makes compression actually engage mid-run instead of
+        being dead code in the common case. The compression strategies
+        themselves are unchanged -- this only changes when they fire.
 
         Dispatches to one of two strategies based on self.mode:
 
@@ -176,11 +247,11 @@ class ContextManager:
         """
         import re
         current_tokens = self.token_estimate()
-        if current_tokens <= self.max_tokens * 0.7:
-            return  # Within 70% budget
+        if current_tokens <= self.max_tokens * 0.5:
+            return  # Within 50% budget
 
         logger.warning(
-            f"Context at {current_tokens} tokens exceeds 70% of {self.max_tokens} budget — compressing"
+            f"Context at {current_tokens} tokens exceeds 50% of {self.max_tokens} budget — compressing"
         )
         
         if len(self.history) <= 7:

@@ -16,6 +16,48 @@ class ExtractionError(Exception):
     pass
 
 
+# ---------------------------------------------------------------------------
+# Shared "does this look like real C code" signal
+# ---------------------------------------------------------------------------
+
+# Same indicator set _extract_heuristic() already used for its raw-text
+# fallback -- kept as one constant so the fenced-block validator below and
+# the heuristic fallback can never quietly drift apart from each other.
+_C_CODE_INDICATORS = ("#include", "int main(", "void ", "return 0;")
+
+
+def _looks_like_generator(candidate: str) -> bool:
+    """
+    Heuristic check that `candidate` is plausibly a real PoC generator
+    program, not a stray fragment, a quoted stack trace, or leftover prose
+    that happened to land inside a fenced code block.
+
+    FIX (found from a real tool-use run, arvo:3848): a lone fenced code
+    block used to be trusted unconditionally by _extract_from_fenced_block()
+    -- confirmed on two consecutive attempts of that run, each of which
+    wrapped something that wasn't a generator in triple backticks (a 3-line
+    orphaned function call with no body, then a raw ASan stack-trace dump)
+    and had it accepted as "the PoC," guaranteeing compile_fail and burning
+    two of five attempts on a parsing bug rather than a reasoning miss.
+
+    Two independent positive signals, either is sufficient:
+      - References the exact output path (or the call used to write it)
+        every valid generator must use, per the system prompt's own
+        mandatory rule (`build_initial_prompt` / `build_tool_mode_prompt`:
+        "The generator MUST write its output to exactly '/tmp/poc'").
+      - Has basic C-program shape (same indicator set _extract_heuristic()
+        already checks for its own raw-text fallback).
+
+    Both of the real bad extractions above fail this check: neither
+    contains '/tmp/poc'/'fopen', and neither contains any of
+    _C_CODE_INDICATORS (the orphaned call has no `#include`/`int main(`/
+    `void `/`return 0;`, and stack-trace frame lines don't either).
+    """
+    if '/tmp/poc' in candidate or 'fopen' in candidate:
+        return True
+    return any(indicator in candidate for indicator in _C_CODE_INDICATORS)
+
+
 def extract_code(raw_response: str) -> str:
     """
     Extract clean C code from raw LLM response.
@@ -60,27 +102,38 @@ def extract_code(raw_response: str) -> str:
 def _extract_from_fenced_block(text: str) -> str:
     """
     Extract code from triple-backtick fenced blocks.
-    
-    Finds all fenced code blocks and returns the last one (in case of multiple blocks).
-    Strips backticks and language tags, returning only the code content.
-    
+
+    Finds all fenced code blocks and returns the best candidate -- see
+    _looks_like_generator() for what "best" means. Returns "" (not the raw
+    text of a bad candidate) when nothing found looks like real code, so
+    extract_code() falls through to _extract_heuristic() on the full
+    response instead of silently accepting a fragment or a stack trace as
+    "the PoC."
+
     Args:
         text: Raw response text
-        
+
     Returns:
-        Extracted code string, or empty string if no fenced blocks found
+        Extracted code string, or empty string if no valid fenced block found
     """
     # Regex pattern: ``` + optional language identifier + newline + code + ```
     # Non-greedy to avoid eating multiple blocks at once
     pattern = re.compile(r'```(?:\w+)?\n(.*?)```', re.DOTALL)
-    
+
     # Find all matches
-    matches = pattern.findall(text)
-    
+    matches = [m.strip() for m in pattern.findall(text)]
+
     if not matches:
         return ""
+
     if len(matches) == 1:
-        return matches[0].strip()
+        # FIX (arvo:3848, see _looks_like_generator docstring): a single
+        # fenced block is no longer trusted unconditionally. If it doesn't
+        # look like real generator code, return "" and let extract_code()
+        # fall through to _extract_heuristic() on the full response instead
+        # of handing back a fragment or a stack trace as a "final" answer.
+        candidate = matches[0]
+        return candidate if _looks_like_generator(candidate) else ""
 
     # FIX (found from a real tool-use run, arvo:1972): a single long tool-use
     # response can contain many small inline code fragments -- the model
@@ -95,22 +148,25 @@ def _extract_from_fenced_block(text: str) -> str:
     # small trailing reference after its real answer.
     #
     # Score candidates instead of blindly trusting position: prefer a block
-    # that looks like a complete generator (references /tmp/poc or fopen --
-    # every valid generator must open /tmp/poc for writing, per the system
-    # prompt's own mandatory rule) and, among those, the longest. Falls back
-    # to effectively the same "last wins" tiebreak when nothing scores
-    # differently, so single-shot's existing single-block behavior above is
-    # completely unchanged, and even its rare multi-block case only changes
-    # outcome when one candidate is clearly a more complete generator than
-    # another.
-    def _looks_like_generator(candidate: str) -> bool:
-        return ('/tmp/poc' in candidate) or ('fopen' in candidate)
-
+    # that looks like a complete generator and, among those, the longest.
+    # Falls back to effectively the same "last wins" tiebreak when nothing
+    # scores differently, so single-shot's existing single-block behavior
+    # above is completely unchanged, and even its rare multi-block case only
+    # changes outcome when one candidate is clearly a more complete
+    # generator than another.
     best_index = max(
         range(len(matches)),
         key=lambda i: (_looks_like_generator(matches[i]), len(matches[i]), i)
     )
-    return matches[best_index].strip()
+    best = matches[best_index]
+
+    # FIX (arvo:3848, extended to the multi-block path for consistency): if
+    # NONE of the candidates look like real code -- e.g. every block is a
+    # quoted snippet or trace, not a generator -- don't fall back to
+    # "longest wins" anyway. Return "" so the caller tries the heuristic
+    # path on the full response instead of promoting the least-bad fragment
+    # to "the PoC."
+    return best if _looks_like_generator(best) else ""
 
 
 def _extract_heuristic(text: str) -> str:
@@ -120,23 +176,15 @@ def _extract_heuristic(text: str) -> str:
     Checks for C code indicators to distinguish code from prose.
     If any indicators are found, returns the full text.
     
-    C indicators checked:
-    - #include
-    - int main(
-    - void 
-    - return 0;
-    
     Args:
         text: Raw response text
         
     Returns:
         Full text if C indicators found, empty string otherwise
     """
-    # C code indicators
-    c_indicators = ["#include", "int main(", "void ", "return 0;"]
-    
-    # Check if any indicator is present
-    for indicator in c_indicators:
+    # Check if any indicator is present (shared with _looks_like_generator()
+    # above, so the two never drift apart from each other)
+    for indicator in _C_CODE_INDICATORS:
         if indicator in text:
             # Strip any leftover markdown fences that would cause compiler errors
             text = re.sub(r'^```\w*\n?', '', text.strip())
@@ -176,6 +224,22 @@ if __name__ == "__main__":
 
         # Case 7: empty string — should raise ExtractionError
         ("Empty string", ""),
+
+        # Case 8 (regression test for the arvo:3848 bug): a single fenced
+        # block that is NOT a generator -- an orphaned function call with no
+        # body, no #include, no /tmp/poc. Must NOT be accepted as-is; must
+        # raise ExtractionError since there's no other code anywhere in the
+        # surrounding text either.
+        ("Single non-generator fenced block (arvo:3848 case 1)",
+         "Let me trace through this.\n```c\npe_iterate_resources(\n"
+         "    pe,\n    (RESOURCE_CALLBACK_FUNC) pe_collect_resources,\n"
+         "    (void*) pe);\n```"),
+
+        # Case 9 (regression test, arvo:3848 attempt 2 shape): a single
+        # fenced block containing a stack trace, not code. Must also be
+        # rejected.
+        ("Single fenced stack trace (arvo:3848 case 2)",
+         "```\n#0 0x54cc88 in foo bar.c:1\n#1 0x54e901 in baz qux.c:2\n```"),
     ]
 
     for name, raw in cases:

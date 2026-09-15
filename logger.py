@@ -86,10 +86,11 @@ class StepLogger:
     def log_prompt_built(self, prompt_type: str, char_count: int) -> None:
         self._safe_print(f"  [1/5] 📝 Prompt built           ({prompt_type}, {char_count:,} chars)")
 
-    def log_llm_response(self, elapsed_sec: float, char_count: int) -> None:
-        self._safe_print(f"  [2/5] 🤖 LLM response           {elapsed_sec:.1f}s  ({char_count:,} chars)")
+    def log_llm_response(self, elapsed_sec: float, char_count: int, cumulative_tokens: int | None = None) -> None:
+        suffix = f"  |  tokens so far: {cumulative_tokens:,}" if cumulative_tokens is not None else ""
+        self._safe_print(f"  [2/5] 🤖 LLM response           {elapsed_sec:.1f}s  ({char_count:,} chars){suffix}")
 
-    def log_tool_turn(self, turn_num: int, elapsed_sec: float, char_count: int) -> None:
+    def log_tool_turn(self, turn_num: int, elapsed_sec: float, char_count: int, cumulative_tokens: int | None = None) -> None:
         """
         For AGENT_MODE=tool_use (agent/agent_loop.py's _run_agent_with_tools).
         log_llm_response() above prints a fixed "[2/5]" label sized for
@@ -97,8 +98,16 @@ class StepLogger:
         (and printed dozens of times unchanged) for a tool-use turn, which
         doesn't map onto those 5 stages at all. This shows real turn count
         instead of a static label.
+
+        cumulative_tokens (added in the token-budget audit follow-up, Sept
+        2026): the running total token count for this run so far, from
+        agent.llm_client.get_cumulative_usage() -- lets you watch token
+        spend live, turn by turn, instead of only seeing it after the run
+        ends. Optional so older call sites (or a future NullStepLogger
+        subclass) don't have to pass it.
         """
-        self._safe_print(f"  [turn {turn_num}] 🤖 LLM response          {elapsed_sec:.1f}s  ({char_count:,} chars)")
+        suffix = f"  |  tokens so far: {cumulative_tokens:,}" if cumulative_tokens is not None else ""
+        self._safe_print(f"  [turn {turn_num}] 🤖 LLM response          {elapsed_sec:.1f}s  ({char_count:,} chars){suffix}")
 
     def log_tool_call(self, turn_num: int, tool_name: str) -> None:
         """Companion to log_tool_turn() -- shows which tool the agent invoked

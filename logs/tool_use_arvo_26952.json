@@ -1,9 +1,9 @@
 {
   "cve_id": "arvo:26952",
   "success": false,
-  "attempts": 1,
+  "attempts": 0,
   "final_poc": "",
-  "failure_reason": "llm_error",
+  "failure_reason": "max_tool_turns_reached",
   "transcript": [],
   "hallucinated_symbols_per_attempt": []
 }
