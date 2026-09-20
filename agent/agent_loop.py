@@ -779,11 +779,16 @@ def _process_final_submission(
         f"{result.feedback[:3000]}\n\n"
         f"IMPORTANT: Do NOT immediately resubmit the same or similar PoC. "
         f"Use your tools (run_bash, read_file, compile_and_run) to investigate WHY "
-        f"the previous attempt failed before trying again. Look at what the crash "
-        f"description says the vulnerable code path actually requires, and verify "
-        f"with compile_and_run that your new hypothesis actually reaches that path "
-        f"before submitting. A different approach is needed -- not the same input "
-        f"with minor variations."
+        f"the previous attempt failed before trying again. Two different things "
+        f"could be wrong, and they need different checks: (1) the CODE PATH -- "
+        f"what the crash description says the vulnerable code actually requires; "
+        f"(2) the INPUT FORMAT -- before building a structured or multi-part input "
+        f"for your next attempt, read the actual fuzzer entry point (e.g. "
+        f"LLVMFuzzerTestOneInput) to confirm exactly how it parses the bytes you "
+        f"provide, rather than assuming a container format it may not support. "
+        f"Verify with compile_and_run that your new hypothesis actually reaches "
+        f"the target path before submitting again. A different approach is "
+        f"needed -- not the same input with minor variations."
     )
     ctx.log_context_usage()
     return None
