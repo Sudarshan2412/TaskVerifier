@@ -1,7 +1,7 @@
 {
   "cve_id": "arvo:26952",
   "success": false,
-  "attempts": 5,
+  "attempts": 1,
   "final_poc": "",
   "failure_reason": "max_attempts_reached",
   "transcript": [],
