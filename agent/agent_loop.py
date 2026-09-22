@@ -986,7 +986,16 @@ def _run_agent_with_tools(
         # for it rather than the whole run just running out the clock.
         # Floor of 10 so a large max_attempts doesn't starve every attempt
         # down to an unworkably small budget.
-        MAX_TURNS_PER_ATTEMPT = max(MAX_TOOL_TURNS // max_attempts, 10)
+        _raw_per_attempt = MAX_TOOL_TURNS // max_attempts
+        MAX_TURNS_PER_ATTEMPT = max(_raw_per_attempt, 10)
+        _effective_max_attempts = MAX_TOOL_TURNS // MAX_TURNS_PER_ATTEMPT
+        if _effective_max_attempts < max_attempts:
+            logger.warning(
+                f"MAX_ATTEMPTS={max_attempts} but MAX_TOOL_TURNS={MAX_TOOL_TURNS} with the "
+                f"10-turn/attempt floor gives only {_effective_max_attempts} effective attempts "
+                f"({MAX_TURNS_PER_ATTEMPT} turns each). "
+                f"To get {max_attempts} real attempts, set MAX_TOOL_TURNS>={max_attempts * 10}."
+            )
 
         # FIX (found watching a live pilot run): reaching MAX_TOOL_TURNS used
         # to just exit the loop silently -- if the model was still exploring
@@ -1002,7 +1011,13 @@ def _run_agent_with_tools(
         # a global once-per-run nudge only ever helped the first attempt that
         # happened to be running when it fired; every attempt now gets its
         # own warning before its own sub-budget runs out.
-        NUDGE_MARGIN_TURNS = int(os.environ.get("MAX_TOOL_TURNS_NUDGE_MARGIN", "10"))
+        NUDGE_MARGIN_TURNS = int(os.environ.get("MAX_TOOL_TURNS_NUDGE_MARGIN", "3"))
+        if NUDGE_MARGIN_TURNS >= MAX_TURNS_PER_ATTEMPT:
+            logger.warning(
+                f"NUDGE_MARGIN_TURNS={NUDGE_MARGIN_TURNS} >= MAX_TURNS_PER_ATTEMPT={MAX_TURNS_PER_ATTEMPT}: "
+                f"nudge will fire on turn 1 of every attempt before the model does any investigation. "
+                f"Set MAX_TOOL_TURNS_NUDGE_MARGIN < {MAX_TURNS_PER_ATTEMPT} to fix this."
+            )
         nudged_this_attempt = False
         total_turns = 0
         turns_this_attempt = 0
