@@ -163,11 +163,23 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
                 combined_output
             )
             
+            # sanitizer_common_interceptors.inc appears in ASAN's SUMMARY for ANY
+            # intercepted libc call (strcmp, memcpy, strcpy, etc.) — it fires even
+            # when the actual bug is in the target library calling that function.
+            # Using it for infra detection causes systematic false-positives
+            # (e.g. global-buffer-overflow via strcmp always summaries here).
+            # Only trust the explicit file match for true libFuzzer-internal files;
+            # fall through to frame-counting for everything else.
+            _INTERCEPTOR_MARKERS = ('sanitizer_common_interceptors',)
+
             explicit_infra_file = None
             if infra_err_match:
                 explicit_infra_file = infra_err_match.group(1)
             elif summary_match:
-                explicit_infra_file = summary_match.group(1)
+                candidate = summary_match.group(1)
+                # Exclude interceptor shim files — not a reliable infra indicator
+                if not any(m in candidate.lower() for m in _INTERCEPTOR_MARKERS):
+                    explicit_infra_file = candidate
 
             if explicit_infra_file and any(inf in explicit_infra_file.lower() for inf in _INFRA_DIRS):
                 is_infra_crash = True
