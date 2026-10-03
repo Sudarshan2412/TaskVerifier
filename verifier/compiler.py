@@ -1,4 +1,3 @@
-
 # verifier/compiler.py
 import subprocess
 import os
@@ -30,7 +29,24 @@ def compile_poc(poc_code: str, cve_entry: dict, timeout_sec: int = 30) -> dict:
         'sanitizers_enabled': False
     }
 
-    workspace = Path('./trial_workspace')
+    # FIX (tool-use architecture): this used to be a single fixed
+    # './trial_workspace' path shared by every call. That was fine when
+    # compile_poc() was called once per attempt (max 5x per CVE, strictly
+    # sequential), but the tool-use loop's compile_and_run tool can call this
+    # many times within one attempt -- a fixed shared path becomes a real
+    # collision risk under that usage pattern (verified reasoning, not yet a
+    # bug encountered in the single-shot path, but a genuine one waiting to
+    # happen once repeated calls land here). Namespacing per call with a
+    # UUID subdirectory removes the collision risk entirely, for both
+    # calling patterns, with no change to the return shape callers already
+    # depend on -- only an added 'workspace_dir' key, nothing removed or
+    # renamed. Existing callers are unaffected; the tool-use path uses
+    # cleanup_compile_result() (already present in this file, previously
+    # unused by agent_loop.py) after each call to avoid accumulating one
+    # workspace directory per tool call against the tight Codespaces disk
+    # quota discussed elsewhere in this project.
+    import uuid
+    workspace = Path('./trial_workspace') / uuid.uuid4().hex[:12]
     workspace.mkdir(parents=True, exist_ok=True)
     c_file_host = workspace / 'poc.c'
     binary_host = workspace / 'poc'
@@ -40,6 +56,7 @@ def compile_poc(poc_code: str, cve_entry: dict, timeout_sec: int = 30) -> dict:
     
     result['c_file'] = str(c_file_host)
     result['binary_path'] = str(binary_host)
+    result['workspace_dir'] = str(workspace)
 
     try:
         # 2. Compile the AI's generator inside the Docker container
@@ -159,7 +176,15 @@ def _has_sanitizer_error(stderr: str) -> bool:
 
 # Optional: Clean up temporary files
 def cleanup_compile_result(result: dict):
-    """Delete temporary files created during compilation"""
+    """Delete temporary files created during compilation.
+
+    FIX (tool-use architecture): now also removes the per-call workspace
+    subdirectory itself (result['workspace_dir'], added alongside the
+    per-call UUID namespacing above), not just the two known files inside
+    it -- otherwise repeated compile_and_run calls in a tool-use session
+    would still leave one empty (or partially-populated) directory behind
+    per call.
+    """
     if result.get('c_file') and os.path.exists(result['c_file']):
         try:
             os.unlink(result['c_file'])
@@ -169,6 +194,13 @@ def cleanup_compile_result(result: dict):
     if result.get('binary_path') and os.path.exists(result['binary_path']):
         try:
             os.unlink(result['binary_path'])
+        except:
+            pass
+
+    if result.get('workspace_dir') and os.path.exists(result['workspace_dir']):
+        try:
+            import shutil
+            shutil.rmtree(result['workspace_dir'], ignore_errors=True)
         except:
             pass
 

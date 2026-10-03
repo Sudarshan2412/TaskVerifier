@@ -51,7 +51,7 @@ Output:
   for each ID.
 """
 
-import json, os, re, sys, subprocess, tempfile
+import json, os, re, sys, subprocess, tempfile, shutil
 
 # FIX (arvo:12957 investigation): default paths used to be under /tmp, which
 # GitHub Codespaces clears on every stop -- not just a full rebuild, a normal
@@ -99,8 +99,7 @@ REPO_MAP = {
     "jsoncons":       "https://github.com/danielaparker/jsoncons",
     "libarchive":     "https://github.com/libarchive/libarchive",
     "libssh2":        "https://github.com/libssh2/libssh2",
-    "libxml2":        "https://github.com/GNOME/libxml2",
-    "libxslt":        "https://github.com/GNOME/libxslt",
+    "libxml2":        "https://github.com/GNOME/libxml2",    "libxslt":        "https://github.com/GNOME/libxslt",
     "lz4":            "https://github.com/lz4/lz4",
     # "llvm-project": monorepo (clang, clang-tools-extra, llvm, etc.) --
     # deliberately left unmapped. A single repo_url is not enough here;
@@ -279,6 +278,24 @@ def derive_repo_url(meta):
 def ensure_repo(project, repo_url):
     os.makedirs(REPO_CACHE, exist_ok=True)
     dest = os.path.join(REPO_CACHE, project)
+
+    if os.path.exists(dest):
+        # FIX (found from a real failure on arvo:1972): a directory existing
+        # used to be trusted unconditionally -- if an earlier run was
+        # interrupted (network drop, Ctrl+C) partway through cloning a
+        # project this CVE happens to share with an earlier one, the
+        # resulting partial/corrupt clone would be silently reused forever,
+        # with every symptom (failed fetch, failed rev-parse) blamed on
+        # this specific commit instead of the real cause. A cheap health
+        # check (does this even look like a working git repo?) catches
+        # that before it wastes time debugging the wrong thing.
+        health = subprocess.run(
+            ["git", "rev-parse", "--git-dir"], cwd=dest, capture_output=True
+        )
+        if health.returncode != 0:
+            print(f"  [repair] {dest} exists but isn't a healthy git repo -- re-cloning", file=sys.stderr)
+            shutil.rmtree(dest, ignore_errors=True)
+
     if not os.path.exists(dest):
         print(f"  [clone] {repo_url} -> {dest}", file=sys.stderr)
         subprocess.run(
@@ -288,16 +305,45 @@ def ensure_repo(project, repo_url):
     return dest
 
 def fetch_commit(repo_dir, commit_hash):
+    """
+    FIX (found from a real failure on arvo:1972): the fetch's own exit code
+    used to be discarded entirely, and there was no retry if a shallow
+    depth=2 fetch didn't happen to include enough history to resolve the
+    commit's parent -- both failure modes surfaced downstream as a
+    confusing "unknown revision" error from rev-parse, which doesn't tell
+    you the fetch was the actual problem. Now: check the fetch's own
+    result, and if the commit still isn't resolvable enough to find its
+    parent after the fetch, retry with escalating depth before giving up.
+    """
     r = subprocess.run(
         ["git", "cat-file", "-t", commit_hash],
         cwd=repo_dir, capture_output=True, text=True
     )
-    if r.returncode != 0:
-        print(f"  [fetch] fetching {commit_hash[:12]}...", file=sys.stderr)
-        subprocess.run(
-            ["git", "fetch", "--depth=2", "origin", commit_hash],
-            cwd=repo_dir, capture_output=True
+    if r.returncode == 0:
+        return  # already present locally, nothing to do
+
+    for depth in (2, 20, 250):
+        print(f"  [fetch] fetching {commit_hash[:12]} (depth={depth})...", file=sys.stderr)
+        fetch_result = subprocess.run(
+            ["git", "fetch", f"--depth={depth}", "origin", commit_hash],
+            cwd=repo_dir, capture_output=True, text=True
         )
+        if fetch_result.returncode != 0:
+            print(
+                f"  [warn] fetch at depth={depth} failed: {fetch_result.stderr.strip()[:300]}",
+                file=sys.stderr
+            )
+            continue
+        # Check whether this depth was actually enough to resolve the
+        # parent -- not just whether the fetch command itself succeeded.
+        parent_check = subprocess.run(
+            ["git", "rev-parse", f"{commit_hash}^"], cwd=repo_dir, capture_output=True
+        )
+        if parent_check.returncode == 0:
+            return
+        print(f"  [warn] depth={depth} fetched the commit but not enough history to resolve its parent -- trying deeper", file=sys.stderr)
+
+    print(f"  [warn] could not fetch enough history for {commit_hash[:12]} even at depth=250", file=sys.stderr)
 
 def get_parent_commit(repo_dir, fix_commit):
     return run(["git", "rev-parse", f"{fix_commit}^"], cwd=repo_dir).strip()
@@ -658,40 +704,60 @@ def process(arvo_id):
     # now a fallback for the URL shapes derive_repo_url() doesn't recognize
     # (e.g. SourceForge), not the primary lookup. See derive_repo_url()'s
     # docstring for why REPO_MAP alone isn't reliable here.
-    repo_url = derive_repo_url(meta) or REPO_MAP.get(project)
-    # Cache dir keyed on the URL's own repo name, not meta['project'] --
-    # the latter can be an OSS-Fuzz-internal build-config name (again,
-    # "capstonenext" vs. the real "capstone") that's fine as a dict key but
-    # a confusing directory name to end up with on disk.
-    repo_cache_key = repo_url.rstrip('/').split('/')[-1] if repo_url else project
+    #
+    # FIX (arvo:1972): a project's canonical repo can differ from what
+    # REPO_MAP has cached -- libxml2's meta['fix'] points to
+    # gitlab.gnome.org (the project's actual current host; REPO_MAP had a
+    # github.com mirror). Previously only ONE derived URL was ever tried
+    # (`or` short-circuits, so REPO_MAP was never consulted once
+    # derive_repo_url() returned anything at all, even if that URL then
+    # failed to clone). Build an ordered list of every distinct candidate
+    # and try each in turn instead of committing to the first.
+    candidate_urls = []
+    derived = derive_repo_url(meta)
+    if derived:
+        candidate_urls.append(derived)
+    mapped = REPO_MAP.get(project)
+    if mapped and mapped not in candidate_urls:
+        candidate_urls.append(mapped)
 
     source_snippet = None
     extraction_method = None
 
-    if repo_url and fix_commits and patch_files:
-        try:
-            repo_dir = ensure_repo(repo_cache_key, repo_url)
-            for fix_commit in fix_commits:
-                fetch_commit(repo_dir, fix_commit)
-                try:
-                    pre_fix = get_parent_commit(repo_dir, fix_commit)
-                except RuntimeError as e:
-                    print(f"  [warn] couldn't resolve parent of {fix_commit[:12]}: {e}", file=sys.stderr)
-                    continue
-                print(f"  pre-fix commit: {pre_fix[:12]}", file=sys.stderr)
+    if candidate_urls and fix_commits and patch_files:
+        repo_dir = None
+        for repo_url in candidate_urls:
+            repo_cache_key = repo_url.rstrip('/').split('/')[-1]
+            try:
+                repo_dir = ensure_repo(repo_cache_key, repo_url)
+                break
+            except Exception as e:
+                print(f"  [warn] clone of {repo_url} failed: {e} -- trying next candidate URL if any", file=sys.stderr)
+                repo_dir = None
 
-                source_snippet = _try_line_anchored(repo_dir, pre_fix, patch_files, patch_text)
-                if source_snippet:
-                    extraction_method = "patch_line_lookup"
-                    break
+        if repo_dir:
+            try:
+                for fix_commit in fix_commits:
+                    fetch_commit(repo_dir, fix_commit)
+                    try:
+                        pre_fix = get_parent_commit(repo_dir, fix_commit)
+                    except RuntimeError as e:
+                        print(f"  [warn] couldn't resolve parent of {fix_commit[:12]}: {e}", file=sys.stderr)
+                        continue
+                    print(f"  pre-fix commit: {pre_fix[:12]}", file=sys.stderr)
 
-                if crash_funcs:
-                    source_snippet = _try_crash_state_names(repo_dir, pre_fix, patch_files, crash_funcs)
+                    source_snippet = _try_line_anchored(repo_dir, pre_fix, patch_files, patch_text)
                     if source_snippet:
-                        extraction_method = "crash_state_function_match"
+                        extraction_method = "patch_line_lookup"
                         break
-        except Exception as e:
-            print(f"  [warn] repo strategy failed: {e}", file=sys.stderr)
+
+                    if crash_funcs:
+                        source_snippet = _try_crash_state_names(repo_dir, pre_fix, patch_files, crash_funcs)
+                        if source_snippet:
+                            extraction_method = "crash_state_function_match"
+                            break
+            except Exception as e:
+                print(f"  [warn] repo strategy failed: {e}", file=sys.stderr)
 
     if not source_snippet and patch_text and patch_files:
         print("  [fallback] using patch hunk context (LOW CONFIDENCE -- review manually)", file=sys.stderr)

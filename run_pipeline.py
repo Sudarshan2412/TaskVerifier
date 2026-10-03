@@ -14,7 +14,7 @@ from agent.agent_loop import run_agent
 from logger import StepLogger, ReportWriter
 from dataset_sanitizer import sanitize_entry
 
-MAX_ATTEMPTS = int(os.environ.get("WEEK8_MAX_ATTEMPTS", "2"))
+MAX_ATTEMPTS = int(os.environ.get("MAX_ATTEMPTS", "2"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,7 +22,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TARGET_CVE_IDS = [c.strip() for c in os.environ.get("WEEK8_CVE_IDS", "").split(",") if c.strip()]
+TARGET_CVE_IDS = [c.strip() for c in os.environ.get("CVE_IDS", "").split(",") if c.strip()]
+
+# AGENT_MODE isn't read here directly -- agent.agent_loop.run_agent() reads
+# it from the environment itself and dispatches to _run_agent_single_shot
+# (default) or _run_agent_with_tools accordingly. Resolved and logged here
+# purely so the run's console output confirms which mode actually applied,
+# rather than leaving that implicit -- worth being explicit about, since a
+# typo'd AGENT_MODE value silently falls back to single_shot rather than
+# erroring, and a pilot run silently landing on the wrong mode would be an
+# easy thing to miss otherwise.
+_AGENT_MODE = os.environ.get("AGENT_MODE", "single_shot")
+if _AGENT_MODE not in ("single_shot", "tool_use"):
+    logger.warning(
+        f"AGENT_MODE={_AGENT_MODE!r} is not a recognized value (expected "
+        f"'single_shot' or 'tool_use') -- run_agent() will fall back to "
+        f"'single_shot'. Check for a typo if that's not what you intended."
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -95,6 +111,7 @@ step_logger   = StepLogger()
 report_writer = ReportWriter(max_attempts=MAX_ATTEMPTS)
 
 step_logger.log_run_header(total_cves=len(test_cves), max_attempts=MAX_ATTEMPTS)
+step_logger._safe_print(f"  AGENT_MODE = {_AGENT_MODE}")
 
 for i, cve in enumerate(test_cves, start=1):
     cve_id     = cve.get("id", "UNKNOWN")
@@ -125,7 +142,7 @@ for i, cve in enumerate(test_cves, start=1):
 
         os.makedirs("logs", exist_ok=True)
         safe_id = cve_id.replace("/", "_").replace(":", "_").replace("-", "_")
-        with open(f"logs/week8_manual_{safe_id}.json", "w") as f:
+        with open(f"logs/{_AGENT_MODE}_{safe_id}.json", "w") as f:
             json.dump(result_dict, f, indent=2)
 
         report_writer.add_cve_result(

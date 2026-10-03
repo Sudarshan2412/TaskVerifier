@@ -1,0 +1,69 @@
+# --- repro environment -------------------------------------
+# image:            n132/arvo:57061-vul
+# image_id:         sha256:01173bf9d40dfe57159ea41e5549f50e2b6b5bd7a24200f97b23516ccb41c568
+# host_kernel:      Linux 6.8.0-1052-azure x86_64
+# aslr_setting:     2
+# docker_version:   29.3.0-1
+# --------------------------------------------------------------
+Running LLVMFuzzerInitialize ...
+continue...
+=================================================================
+==7==ERROR: AddressSanitizer: attempting double-free on 0x602000001590 in thread T0:
+SCARINESS: 42 (double-free)
+    #0 0x49f8c2 in free /src/llvm-project/compiler-rt/lib/asan/asan_malloc_linux.cpp:52:3
+    #1 0x53c4cd in xsltCompileStepPattern /src/libxslt/libxslt/pattern.c:1691:2
+    #2 0x537aad in xsltCompileRelativePathPattern /src/libxslt/libxslt/pattern.c
+    #3 0x5302d7 in xsltCompileLocationPathPattern /src/libxslt/libxslt/pattern.c
+    #4 0x5302d7 in xsltCompilePatternInternal /src/libxslt/libxslt/pattern.c:1915:2
+    #5 0x532350 in xsltAddTemplate /src/libxslt/libxslt/pattern.c:2081:11
+    #6 0x521377 in xsltParseStylesheetTemplate /src/libxslt/libxslt/xslt.c:5472:5
+    #7 0x5181ed in xsltParseStylesheetTop /src/libxslt/libxslt/xslt.c:6207:6
+    #8 0x5181ed in xsltParseStylesheetProcess /src/libxslt/libxslt/xslt.c:6463:2
+    #9 0x51bb38 in xsltParseStylesheetUser /src/libxslt/libxslt/xslt.c:6671:9
+    #10 0x4df3a4 in xsltFuzzXslt /src/libxslt/tests/fuzz/fuzz.c:312:9
+    #11 0x4dcfe6 in LLVMFuzzerTestOneInput /src/libxslt/tests/fuzz/xslt.c:18:23
+    #12 0x4e11ca in ExecuteFilesOnyByOne /src/aflplusplus/utils/aflpp_driver/aflpp_driver.c:234:7
+    #13 0x4e0f9c in main /src/aflplusplus/utils/aflpp_driver/aflpp_driver.c:318:12
+    #14 0x764147dfa082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 87b331c034a6458c64ce09c03939e947212e18ce)
+    #15 0x41e72d in _start (/out/xslt+0x41e72d)
+
+DEDUP_TOKEN: free--xsltCompileStepPattern--xsltCompileRelativePathPattern
+0x602000001590 is located 0 bytes inside of 2-byte region [0x602000001590,0x602000001592)
+freed by thread T0 here:
+    #0 0x49f8c2 in free /src/llvm-project/compiler-rt/lib/asan/asan_malloc_linux.cpp:52:3
+    #1 0x537fb9 in xsltCompMatchAdd /src/libxslt/libxslt/pattern.c:315:10
+    #2 0x53b284 in xsltCompileStepPattern /src/libxslt/libxslt/pattern.c:1640:13
+    #3 0x537aad in xsltCompileRelativePathPattern /src/libxslt/libxslt/pattern.c
+    #4 0x5302d7 in xsltCompileLocationPathPattern /src/libxslt/libxslt/pattern.c
+    #5 0x5302d7 in xsltCompilePatternInternal /src/libxslt/libxslt/pattern.c:1915:2
+    #6 0x532350 in xsltAddTemplate /src/libxslt/libxslt/pattern.c:2081:11
+    #7 0x521377 in xsltParseStylesheetTemplate /src/libxslt/libxslt/xslt.c:5472:5
+    #8 0x5181ed in xsltParseStylesheetTop /src/libxslt/libxslt/xslt.c:6207:6
+    #9 0x5181ed in xsltParseStylesheetProcess /src/libxslt/libxslt/xslt.c:6463:2
+    #10 0x51bb38 in xsltParseStylesheetUser /src/libxslt/libxslt/xslt.c:6671:9
+    #11 0x4df3a4 in xsltFuzzXslt /src/libxslt/tests/fuzz/fuzz.c:312:9
+    #12 0x4dcfe6 in LLVMFuzzerTestOneInput /src/libxslt/tests/fuzz/xslt.c:18:23
+    #13 0x4e11ca in ExecuteFilesOnyByOne /src/aflplusplus/utils/aflpp_driver/aflpp_driver.c:234:7
+
+DEDUP_TOKEN: free--xsltCompMatchAdd--xsltCompileStepPattern
+previously allocated by thread T0 here:
+    #0 0x49fb66 in __interceptor_malloc /src/llvm-project/compiler-rt/lib/asan/asan_malloc_linux.cpp:69:3
+    #1 0x4e0699 in xmlFuzzMalloc /src/libxslt/tests/fuzz/fuzz.c:423:12
+    #2 0x6ea298 in xmlStrndup /src/libxml2/xmlstring.c:49:23
+    #3 0x538eb0 in xsltScanNCName /src/libxslt/libxslt/pattern.c:1300:11
+    #4 0x53ac3e in xsltCompileStepPattern /src/libxslt/libxslt/pattern.c:1521:10
+    #5 0x537aad in xsltCompileRelativePathPattern /src/libxslt/libxslt/pattern.c
+    #6 0x5302d7 in xsltCompileLocationPathPattern /src/libxslt/libxslt/pattern.c
+    #7 0x5302d7 in xsltCompilePatternInternal /src/libxslt/libxslt/pattern.c:1915:2
+    #8 0x532350 in xsltAddTemplate /src/libxslt/libxslt/pattern.c:2081:11
+    #9 0x521377 in xsltParseStylesheetTemplate /src/libxslt/libxslt/xslt.c:5472:5
+    #10 0x5181ed in xsltParseStylesheetTop /src/libxslt/libxslt/xslt.c:6207:6
+    #11 0x5181ed in xsltParseStylesheetProcess /src/libxslt/libxslt/xslt.c:6463:2
+    #12 0x51bb38 in xsltParseStylesheetUser /src/libxslt/libxslt/xslt.c:6671:9
+    #13 0x4df3a4 in xsltFuzzXslt /src/libxslt/tests/fuzz/fuzz.c:312:9
+    #14 0x4dcfe6 in LLVMFuzzerTestOneInput /src/libxslt/tests/fuzz/xslt.c:18:23
+    #15 0x4e11ca in ExecuteFilesOnyByOne /src/aflplusplus/utils/aflpp_driver/aflpp_driver.c:234:7
+
+DEDUP_TOKEN: __interceptor_malloc--xmlFuzzMalloc--xmlStrndup
+SUMMARY: AddressSanitizer: double-free /src/llvm-project/compiler-rt/lib/asan/asan_malloc_linux.cpp:52:3 in free
+==7==ABORTING

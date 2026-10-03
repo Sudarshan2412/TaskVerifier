@@ -53,9 +53,9 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
         '--read-only',
         '--tmpfs', '/tmp:size=32m',
         '-v', "/tmp/poc:/tmp/poc:ro",
-        '-e', 'ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:abort_on_error=1:exitcode=77:allocator_may_return_null=1',
-        '-e', 'MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exitcode=77',
-        '-e', 'UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exitcode=77',
+        '-e', 'ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:exitcode=77:allocator_may_return_null=1',
+        '-e', 'MSAN_OPTIONS=halt_on_error=1:exitcode=77',
+        '-e', 'UBSAN_OPTIONS=halt_on_error=1:exitcode=77',
         image_name,
         fuzz_target,
         '/tmp/poc'
@@ -107,7 +107,10 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
         # --- WHITELIST CRASH DETECTION ---
         # Rule 1: Raw OS signals (exit code > 128) are real crashes.
         #         137 (OOM) is excluded — handled separately above.
-        is_signal_crash = exit_code > 128 and exit_code != 137
+        #         77 is the explicit sanitizer exit code (exitcode=77 in
+        #         ASAN/MSAN/UBSAN options); catch it here as defence-in-depth
+        #         alongside the sanitizer keyword check in Rule 2.
+        is_signal_crash = (exit_code > 128 and exit_code != 137) or exit_code == 77
 
         # Rule 2: Sanitizer keywords in output confirm a real memory violation.
         # P8: UBSAN often reports as 'runtime error:' without the full
@@ -125,7 +128,12 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
         crashed = is_signal_crash or has_sanitizer_output
 
         if crashed:
-            crash_source = "signal" if is_signal_crash else "sanitizer"
+            if exit_code == 77:
+                crash_source = "sanitizer-exit-77"
+            elif is_signal_crash:
+                crash_source = f"signal-{exit_code}"
+            else:
+                crash_source = "sanitizer-output"
             print(f"[EXEC] ✓ Crash detected via {crash_source} (exit code {exit_code})")
         else:
             print(f"[EXEC] ✗ No crash. Exit code {exit_code}, no sanitizer output.")
@@ -155,11 +163,23 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
                 combined_output
             )
             
+            # sanitizer_common_interceptors.inc appears in ASAN's SUMMARY for ANY
+            # intercepted libc call (strcmp, memcpy, strcpy, etc.) — it fires even
+            # when the actual bug is in the target library calling that function.
+            # Using it for infra detection causes systematic false-positives
+            # (e.g. global-buffer-overflow via strcmp always summaries here).
+            # Only trust the explicit file match for true libFuzzer-internal files;
+            # fall through to frame-counting for everything else.
+            _INTERCEPTOR_MARKERS = ('sanitizer_common_interceptors',)
+
             explicit_infra_file = None
             if infra_err_match:
                 explicit_infra_file = infra_err_match.group(1)
             elif summary_match:
-                explicit_infra_file = summary_match.group(1)
+                candidate = summary_match.group(1)
+                # Exclude interceptor shim files — not a reliable infra indicator
+                if not any(m in candidate.lower() for m in _INTERCEPTOR_MARKERS):
+                    explicit_infra_file = candidate
 
             if explicit_infra_file and any(inf in explicit_infra_file.lower() for inf in _INFRA_DIRS):
                 is_infra_crash = True
@@ -210,8 +230,8 @@ def check_execution(binary_path: str, cve_entry: dict) -> dict:
                 '--read-only',
                 '--tmpfs', '/tmp:size=32m',
                 '-v', "/tmp/poc:/tmp/poc:ro",
-                '-e', 'ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:abort_on_error=1:exitcode=77:allocator_may_return_null=1',
-                '-e', 'MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exitcode=77',
+                '-e', 'ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:exitcode=77:allocator_may_return_null=1',
+                '-e', 'MSAN_OPTIONS=halt_on_error=1:exitcode=77',
                 '-e', 'UBSAN_OPTIONS=halt_on_error=0:print_stacktrace=1',
                 image_name,
                 fuzz_target,

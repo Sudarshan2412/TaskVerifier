@@ -1,0 +1,82 @@
+# --- repro environment -------------------------------------
+# image:            n132/arvo:57551-vul
+# image_id:         sha256:31c7ae5cb50dffe53eeaac0b3a2817ae68731fa3bb9a9fa7831b5e904ce7b5c7
+# host_kernel:      Linux 6.8.0-1052-azure x86_64
+# aslr_setting:     2
+# docker_version:   29.3.0-1
+# --------------------------------------------------------------
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 3656821213
+INFO: Loaded 1 modules   (40323 inline 8-bit counters): 40323 [0x9ac4b0, 0x9b6233), 
+INFO: Loaded 1 PC tables (40323 PCs): 40323 [0x871b90,0x90f3c0), 
+/out/xslt: Running 1 inputs 1 time(s) each.
+Running: /tmp/poc
+=================================================================
+==7==ERROR: AddressSanitizer: attempting double-free on 0x6130000003c0 in thread T0:
+SCARINESS: 42 (double-free)
+    #0 0x52eed2 in free /src/llvm-project/compiler-rt/lib/asan/asan_malloc_linux.cpp:52:3
+    #1 0x62c146 in xmlHashDefaultDeallocator /src/libxml2/hash.c:378:5
+    #2 0x62bd51 in xmlHashFree /src/libxml2/hash.c:345:7
+    #3 0x6a4551 in xmlFreeParserCtxt /src/libxml2/parserInternals.c:1837:9
+    #4 0x5d37d7 in xsltDocDefaultLoaderFunc /src/libxslt/libxslt/documents.c
+    #5 0x5cd8a5 in xsltParseStylesheetImport /src/libxslt/libxslt/imports.c:123:14
+    #6 0x5978f3 in xsltParseStylesheetTop /src/libxslt/libxslt/xslt.c:6132:11
+    #7 0x5978f3 in xsltParseStylesheetProcess /src/libxslt/libxslt/xslt.c:6463:2
+    #8 0x59bfc9 in xsltParseStylesheetUser /src/libxslt/libxslt/xslt.c:6671:9
+    #9 0x56e1c9 in xsltFuzzXslt /src/libxslt/tests/fuzz/fuzz.c:312:9
+    #10 0x56c602 in LLVMFuzzerTestOneInput /src/libxslt/tests/fuzz/xslt.c:18:23
+    #11 0x43dfe3 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerLoop.cpp:611:15
+    #12 0x429742 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:324:6
+    #13 0x42efec in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:860:9
+    #14 0x458522 in main /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerMain.cpp:20:10
+    #15 0x75fbb0d3c082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 87b331c034a6458c64ce09c03939e947212e18ce)
+    #16 0x41f90d in _start (/out/xslt+0x41f90d)
+
+DEDUP_TOKEN: free--xmlHashDefaultDeallocator--xmlHashFree
+0x6130000003c0 is located 0 bytes inside of 328-byte region [0x6130000003c0,0x613000000508)
+freed by thread T0 here:
+    #0 0x52f57c in __interceptor_realloc /src/llvm-project/compiler-rt/lib/asan/asan_malloc_linux.cpp:85:3
+    #1 0x56ef1a in xmlFuzzRealloc /src/libxslt/tests/fuzz/fuzz.c:437:12
+    #2 0x664df1 in xmlAddDefAttrs /src/libxml2/parser.c:1257:33
+    #3 0x6641b1 in xmlParseAttributeListDecl /src/libxml2/parser.c:6129:3
+    #4 0x66a8ef in xmlParseMarkupDecl /src/libxml2/parser.c:6942:7
+    #5 0x68d061 in xmlParseInternalSubset /src/libxml2/parser.c:8455:10
+    #6 0x68ba5e in xmlParseDocument /src/libxml2/parser.c:10887:6
+    #7 0x5d3749 in xsltDocDefaultLoaderFunc /src/libxslt/libxslt/documents.c:94:5
+    #8 0x5cd8a5 in xsltParseStylesheetImport /src/libxslt/libxslt/imports.c:123:14
+    #9 0x5978f3 in xsltParseStylesheetTop /src/libxslt/libxslt/xslt.c:6132:11
+    #10 0x5978f3 in xsltParseStylesheetProcess /src/libxslt/libxslt/xslt.c:6463:2
+    #11 0x59bfc9 in xsltParseStylesheetUser /src/libxslt/libxslt/xslt.c:6671:9
+    #12 0x56e1c9 in xsltFuzzXslt /src/libxslt/tests/fuzz/fuzz.c:312:9
+    #13 0x56c602 in LLVMFuzzerTestOneInput /src/libxslt/tests/fuzz/xslt.c:18:23
+    #14 0x43dfe3 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerLoop.cpp:611:15
+    #15 0x429742 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:324:6
+    #16 0x42efec in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:860:9
+    #17 0x458522 in main /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerMain.cpp:20:10
+    #18 0x75fbb0d3c082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 87b331c034a6458c64ce09c03939e947212e18ce)
+
+DEDUP_TOKEN: __interceptor_realloc--xmlFuzzRealloc--xmlAddDefAttrs
+previously allocated by thread T0 here:
+    #0 0x52f57c in __interceptor_realloc /src/llvm-project/compiler-rt/lib/asan/asan_malloc_linux.cpp:85:3
+    #1 0x56ef1a in xmlFuzzRealloc /src/libxslt/tests/fuzz/fuzz.c:437:12
+    #2 0x664df1 in xmlAddDefAttrs /src/libxml2/parser.c:1257:33
+    #3 0x6641b1 in xmlParseAttributeListDecl /src/libxml2/parser.c:6129:3
+    #4 0x66a8ef in xmlParseMarkupDecl /src/libxml2/parser.c:6942:7
+    #5 0x68d061 in xmlParseInternalSubset /src/libxml2/parser.c:8455:10
+    #6 0x68ba5e in xmlParseDocument /src/libxml2/parser.c:10887:6
+    #7 0x5d3749 in xsltDocDefaultLoaderFunc /src/libxslt/libxslt/documents.c:94:5
+    #8 0x5cd8a5 in xsltParseStylesheetImport /src/libxslt/libxslt/imports.c:123:14
+    #9 0x5978f3 in xsltParseStylesheetTop /src/libxslt/libxslt/xslt.c:6132:11
+    #10 0x5978f3 in xsltParseStylesheetProcess /src/libxslt/libxslt/xslt.c:6463:2
+    #11 0x59bfc9 in xsltParseStylesheetUser /src/libxslt/libxslt/xslt.c:6671:9
+    #12 0x56e1c9 in xsltFuzzXslt /src/libxslt/tests/fuzz/fuzz.c:312:9
+    #13 0x56c602 in LLVMFuzzerTestOneInput /src/libxslt/tests/fuzz/xslt.c:18:23
+    #14 0x43dfe3 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerLoop.cpp:611:15
+    #15 0x429742 in fuzzer::RunOneTest(fuzzer::Fuzzer*, char const*, unsigned long) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:324:6
+    #16 0x42efec in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerDriver.cpp:860:9
+    #17 0x458522 in main /src/llvm-project/compiler-rt/lib/fuzzer/FuzzerMain.cpp:20:10
+    #18 0x75fbb0d3c082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 87b331c034a6458c64ce09c03939e947212e18ce)
+
+DEDUP_TOKEN: __interceptor_realloc--xmlFuzzRealloc--xmlAddDefAttrs
+SUMMARY: AddressSanitizer: double-free /src/llvm-project/compiler-rt/lib/asan/asan_malloc_linux.cpp:52:3 in free
+==7==ABORTING
